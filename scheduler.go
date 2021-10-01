@@ -15,8 +15,8 @@ import (
 	"github.com/luno/jettison/j"
 	"github.com/luno/jettison/log"
 	"github.com/prometheus/client_golang/prometheus"
-	"go.etcd.io/etcd/clientv3/concurrency"
-	"go.etcd.io/etcd/etcdserver/api/v3rpc/rpctypes"
+	"go.etcd.io/etcd/api/v3/v3rpc/rpctypes"
+	"go.etcd.io/etcd/client/v3/concurrency"
 )
 
 const modprefix = "modrole:"

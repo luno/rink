@@ -12,10 +12,9 @@ import (
 	"github.com/luno/jettison/j"
 	"github.com/luno/jettison/jtest"
 	"github.com/luno/jettison/log"
-	"github.com/stretchr/testify/require"
-	"go.etcd.io/etcd/clientv3/concurrency"
-
 	"github.com/luno/rink"
+	"github.com/stretchr/testify/require"
+	"go.etcd.io/etcd/client/v3/concurrency"
 )
 
 const (

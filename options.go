@@ -9,7 +9,7 @@ import (
 
 	"github.com/luno/jettison"
 	"github.com/luno/jettison/log"
-	"go.etcd.io/etcd/clientv3"
+	"go.etcd.io/etcd/client/v3"
 )
 
 const defaultRebalanceDelay = time.Second * 60
