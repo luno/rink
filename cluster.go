@@ -207,6 +207,8 @@ func leadOnce(c *cluster, elec *concurrency.Election, ch <-chan struct{}) {
 		return
 	}
 
+	s := c.cloneState()
+
 	// While leader, react to changes in members, rebalance timers and context cancel
 
 	// Trigger immediately on first loop.
@@ -241,8 +243,6 @@ func leadOnce(c *cluster, elec *concurrency.Election, ch <-chan struct{}) {
 			continue
 		}
 
-		s := c.cloneState()
-
 		updated := maybePromote(s, members)
 
 		next, ok := nextRebalance(s, members)
@@ -273,8 +273,6 @@ func leadOnce(c *cluster, elec *concurrency.Election, ch <-chan struct{}) {
 			handleErr(err)
 			continue
 		}
-
-		c.updateState(s)
 	}
 }
 
