@@ -12,7 +12,7 @@ import (
 
 	"github.com/luno/jettison/errors"
 	"github.com/luno/jettison/j"
-	"go.etcd.io/etcd/client/v3"
+	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.etcd.io/etcd/client/v3/concurrency"
 )
 
@@ -186,8 +186,8 @@ func leadOnce(c *cluster, elec *concurrency.Election, ch <-chan struct{}) {
 
 				select {
 				case notifyCh <- struct{}{}:
-				default:
-					c.logger.Debug(c.ctx, "rink cluster notify channel full")
+				case <-ctx.Done():
+					return nil
 				}
 
 				break
@@ -206,6 +206,8 @@ func leadOnce(c *cluster, elec *concurrency.Election, ch <-chan struct{}) {
 	case <-ctx.Done():
 		return
 	}
+
+	s := c.cloneState()
 
 	// While leader, react to changes in members, rebalance timers and context cancel
 
@@ -241,11 +243,9 @@ func leadOnce(c *cluster, elec *concurrency.Election, ch <-chan struct{}) {
 			continue
 		}
 
-		s := c.cloneState()
-
 		updated := maybePromote(s, members)
 
-		next, ok := nextRebalance(s, members)
+		next, ok := nextRebalance(s, members, time.Now())
 		if ok && next == 0 {
 			// Rebalance now
 			s = rebalance(s, members)
@@ -273,8 +273,6 @@ func leadOnce(c *cluster, elec *concurrency.Election, ch <-chan struct{}) {
 			handleErr(err)
 			continue
 		}
-
-		c.updateState(s)
 	}
 }
 
@@ -437,7 +435,7 @@ func listMembers(c *cluster) (map[string]time.Time, error) {
 
 // nextRebalance returns true and a optional delay of when the next rebalance should occur.
 // It returns false if no rebalance is needed.
-func nextRebalance(state state, members map[string]time.Time) (time.Duration, bool) {
+func nextRebalance(state state, members map[string]time.Time, now time.Time) (time.Duration, bool) {
 	for member := range state {
 		if _, ok := members[member]; ok {
 			// Member still active
@@ -460,7 +458,7 @@ func nextRebalance(state state, members map[string]time.Time) (time.Duration, bo
 			continue
 		}
 
-		delta := rebalanceAt.Sub(time.Now())
+		delta := rebalanceAt.Sub(now)
 
 		if delta <= 0 {
 			// Rebalance now
