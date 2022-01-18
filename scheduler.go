@@ -135,18 +135,23 @@ func (s *Scheduler) Await(role string) context.Context {
 	s.cond.L.Lock()
 	defer s.cond.L.Unlock()
 
-	for !hasRole(s.state, s.hasher, s.name, role) {
-		// Wait while we do not have the role.
-		//
-		// Note: Wait unlocks s.cond.L and locks it again before
-		// returning. So multiple goroutines can wait at the
-		// same time but only one will continue at a time.
-		s.cond.Wait()
+	for {
+		for !hasRole(s.state, s.hasher, s.name, role) {
+			// Wait while we do not have the role.
+			//
+			// Note: Wait unlocks s.cond.L and locks it again before
+			// returning. So multiple goroutines can wait at the
+			// same time but only one will continue at a time.
+			s.cond.Wait()
+		}
+		// We have the role (and s.conf.L is locked)
+		ctx, err := s.getOrCreateUnsafe(role)
+		if err != nil {
+			// NoReturnErr: Retry role creation and locking
+			continue
+		}
+		return ctx
 	}
-
-	// We have the role (and s.conf.L is locked)
-
-	return s.getOrCreateUnsafe(role)
 }
 
 // Get returns true and a role context if this scheduler can assume the role now.
@@ -155,20 +160,23 @@ func (s *Scheduler) Await(role string) context.Context {
 func (s *Scheduler) Get(role string) (context.Context, bool) {
 	s.cond.L.Lock()
 	defer s.cond.L.Unlock()
-
 	if !hasRole(s.state, s.hasher, s.name, role) {
 		return nil, false
 	}
-
-	return s.getOrCreateUnsafe(role), true
+	ctx, err := s.getOrCreateUnsafe(role)
+	if err != nil {
+		// NoReturnErr: Return false
+		return nil, false
+	}
+	return ctx, true
 }
 
 // getOrCreateUnsafe returns an existing or new role context for the provided role.
 // If new, an additional etcd mutex is also locked for additional protection against
 // overlapping roles. It is unsafe since it assumes the s.cond.L lock is held.
-func (s *Scheduler) getOrCreateUnsafe(role string) context.Context {
+func (s *Scheduler) getOrCreateUnsafe(role string) (context.Context, error) {
 	if roleCtx, ok := s.roles[role]; ok {
-		return roleCtx.ctx // Just return existing role context.
+		return roleCtx.ctx, nil // Just return existing role context.
 	}
 
 	// FIXME(corver): Creating a new role context for each role will result
@@ -176,12 +184,12 @@ func (s *Scheduler) getOrCreateUnsafe(role string) context.Context {
 	//  `Release` method in the API.
 
 	roleCtx := newRoleCtx(s, role)
-	s.roles[role] = roleCtx
-
 	// Lock additional etcd role mutex.
-	roleCtx.Lock()
-
-	return roleCtx.ctx
+	if err := roleCtx.TryLock(); err != nil {
+		return nil, err
+	}
+	s.roles[role] = roleCtx
+	return roleCtx.ctx, nil
 }
 
 func (s *Scheduler) updateState(next state) {
@@ -248,13 +256,15 @@ type roleCtx struct {
 	gauge  prometheus.Gauge
 }
 
-func (r *roleCtx) Lock() {
-	reliably(r.ctx, r.logger, "lock role", func() error {
-		return r.mutex.Lock(r.ctx)
-	})
-
+func (r *roleCtx) TryLock() error {
+	err := r.mutex.TryLock(r.ctx)
+	if err != nil {
+		r.cancel()
+		return err
+	}
 	r.logger.Info(r.ctx, "rink role locked")
 	r.gauge.Set(1)
+	return nil
 }
 
 // Release releases the role by canceling the role context and unlocking the role mutex.
