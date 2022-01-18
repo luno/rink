@@ -12,9 +12,11 @@ import (
 	"github.com/luno/jettison/j"
 	"github.com/luno/jettison/jtest"
 	"github.com/luno/jettison/log"
-	"github.com/luno/rink"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.etcd.io/etcd/client/v3/concurrency"
+
+	"github.com/luno/rink"
 )
 
 const (
@@ -270,6 +272,39 @@ func TestModRoles(t *testing.T) {
 	assertModRoles(t, m3, 2)    // m3 gets 2
 }
 
+func TestRapidRelease(t *testing.T) {
+	c := newTestCluster()
+
+	sessions := make(map[int]*concurrency.Session)
+	schedulers := make(map[int]*rink.Scheduler)
+
+	for i := 0; i < 20; i++ {
+		s, r := joinNew(t, c, fmt.Sprintf("m%d", i), joinFast)
+		sessions[i] = s
+		schedulers[i] = r
+		awaitInfo(t, r, i, i+1)
+	}
+	// Roles 0-19 assigned to m0-m19
+
+	jtest.RequireNil(t, sessions[0].Close())
+	for i := 5; i < 15; i++ {
+		jtest.RequireNil(t, sessions[i].Close())
+	}
+	ranks := make(map[int]int)
+	for i := 1; i < 20; i++ {
+		if i >= 5 && i < 15 {
+			continue
+		}
+		r := awaitRank(t, schedulers[i], 9)
+		ranks[r] = i
+	}
+	assert.Len(t, ranks, 9)
+	for i := 0; i < len(ranks); i++ {
+		_, ok := ranks[i]
+		assert.True(t, ok)
+	}
+}
+
 // newTestCluster returns a unique cluster name to avoid etcd key clashes with previous aborted tests.
 func newTestCluster() string {
 	return fmt.Sprintf("%s_%d", keyPrefix, time.Now().UnixNano())
@@ -363,6 +398,23 @@ func awaitInfo(t *testing.T, r *rink.Scheduler, rank, size int) {
 	}, time.Second*2, time.Millisecond*10,
 		"expect size %v vs actual size %s; expected rank %v vs actual rank %s",
 		size, futureSize, rank, futureRank)
+}
+
+// awaitRank returns the rank of `r` once the cluster has size members
+func awaitRank(t *testing.T, r *rink.Scheduler, size int) int {
+	t.Helper()
+
+	futureSize := new(future) // For error logging
+	require.Eventually(t, func() bool {
+		_, actualSize := r.Info()
+		*futureSize = future(actualSize)
+		return actualSize == size
+	}, time.Second*2, time.Millisecond*10,
+		"expect size %v vs actual size %s",
+		size, futureSize)
+	rank, s := r.Info()
+	assert.Equal(t, size, s)
+	return rank
 }
 
 type future int

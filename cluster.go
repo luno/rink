@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/gob"
 	"path"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -12,7 +13,8 @@ import (
 
 	"github.com/luno/jettison/errors"
 	"github.com/luno/jettison/j"
-	"go.etcd.io/etcd/client/v3"
+	"github.com/luno/jettison/log"
+	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.etcd.io/etcd/client/v3/concurrency"
 )
 
@@ -186,8 +188,8 @@ func leadOnce(c *cluster, elec *concurrency.Election, ch <-chan struct{}) {
 
 				select {
 				case notifyCh <- struct{}{}:
-				default:
-					c.logger.Debug(c.ctx, "rink cluster notify channel full")
+				case <-ctx.Done():
+					return nil
 				}
 
 				break
@@ -242,6 +244,13 @@ func leadOnce(c *cluster, elec *concurrency.Election, ch <-chan struct{}) {
 			handleErr(err)
 			continue
 		}
+
+		var memStrings []string
+		for m := range members {
+			memStrings = append(memStrings, m)
+		}
+		sort.Strings(memStrings)
+		log.Info(ctx, "updated rink members", j.KV("members", strings.Join(memStrings, ",")))
 
 		updated := maybePromote(s, members)
 
