@@ -132,26 +132,30 @@ func (s *Scheduler) Info() (rank int, size int) {
 // Await blocks until this scheduler can assign the role and returns a role context.
 // The context will be closed when the role is assigned to another member of the cluster.
 func (s *Scheduler) Await(role string) context.Context {
-	s.cond.L.Lock()
-	defer s.cond.L.Unlock()
-
 	for {
-		for !hasRole(s.state, s.hasher, s.name, role) {
-			// Wait while we do not have the role.
-			//
-			// Note: Wait unlocks s.cond.L and locks it again before
-			// returning. So multiple goroutines can wait at the
-			// same time but only one will continue at a time.
-			s.cond.Wait()
-		}
-		// We have the role (and s.conf.L is locked)
-		ctx, err := s.getOrCreateUnsafe(role)
+		ctx, err := s.tryToGetRole(role)
 		if err != nil {
 			// NoReturnErr: Retry role creation and locking
 			continue
 		}
 		return ctx
 	}
+}
+
+func (s *Scheduler) tryToGetRole(role string) (context.Context, error) {
+	s.cond.L.Lock()
+	defer s.cond.L.Unlock()
+
+	for !hasRole(s.state, s.hasher, s.name, role) {
+		// Wait while we do not have the role.
+		//
+		// Note: Wait unlocks s.cond.L and locks it again before
+		// returning. So multiple goroutines can wait at the
+		// same time but only one will continue at a time.
+		s.cond.Wait()
+	}
+	// We have the role (and s.conf.L is locked)
+	return s.getOrCreateUnsafe(role)
 }
 
 // Get returns true and a role context if this scheduler can assume the role now.
