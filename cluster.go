@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/gob"
+	"fmt"
 	"path"
 	"sort"
 	"strconv"
@@ -245,13 +246,6 @@ func leadOnce(c *cluster, elec *concurrency.Election, ch <-chan struct{}) {
 			continue
 		}
 
-		var memStrings []string
-		for m := range members {
-			memStrings = append(memStrings, m)
-		}
-		sort.Strings(memStrings)
-		log.Info(ctx, "updated rink members", j.KV("members", strings.Join(memStrings, ",")))
-
 		updated := maybePromote(s, members)
 
 		next, ok := nextRebalance(s, members, time.Now())
@@ -267,6 +261,22 @@ func leadOnce(c *cluster, elec *concurrency.Election, ch <-chan struct{}) {
 		if !updated {
 			continue
 		}
+
+		var memStrings []string
+		for m := range members {
+			memStrings = append(memStrings, m)
+		}
+		sort.Strings(memStrings)
+		var rankStrings []string
+		for mem, rank := range s {
+			rankStrings = append(rankStrings, fmt.Sprintf("%d -> %s", rank, mem))
+		}
+		sort.Strings(rankStrings)
+
+		log.Info(ctx, "updated rink members", j.MKV{
+			"members": strings.Join(memStrings, ","),
+			"ranks":   strings.Join(rankStrings, ","),
+		})
 
 		var buf bytes.Buffer
 		err = gob.NewEncoder(&buf).Encode(s)
