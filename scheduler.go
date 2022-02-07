@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"path"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -229,10 +230,35 @@ func (s *Scheduler) updateState(next state) {
 	if len(s.state) > 0 && !has {
 		rank = -1 // Use -1 to indicate waiting to join.
 	}
-
-	s.logger.Debug(s.ctx, "rink state updated", j.MKV{
-		"size": len(s.state), "rank": rank})
+	if len(s.state) > 0 {
+		s.logger.Debug(s.ctx, "rink state updated", j.MKV{
+			"state": summariseState(s.state, s.name), "my_rank": rank,
+		})
+	} else {
+		s.logger.Debug(s.ctx, "rink state cleared")
+	}
 	rankGauge.WithLabelValues(s.clusterPrefix).Set(float64(rank))
+}
+
+func summariseState(s state, me string) string {
+	members := make([]string, 0, len(s))
+	for m := range s {
+		members = append(members, m)
+	}
+	// Sort by rank
+	sort.Slice(members, func(i, j int) bool {
+		return s[members[i]] < s[members[j]]
+	})
+
+	summaries := make([]string, 0, len(members))
+	for _, m := range members {
+		isMe := ""
+		if m == me {
+			isMe = " [me]"
+		}
+		summaries = append(summaries, fmt.Sprintf("'%s'%s => rank %d", m, isMe, s[m]))
+	}
+	return strings.Join(summaries, ", ")
 }
 
 func newRoleCtx(r *Scheduler, role string) *roleCtx {
@@ -285,7 +311,9 @@ func (r *roleCtx) Release() {
 	defer cancel()
 
 	err := r.mutex.Unlock(ctx)
-	if err == nil {
+	if err != nil {
+		r.logger.Error(ctx, errors.Wrap(err, "error unlocking role mutex"))
+	} else {
 		// It worked.
 		return
 	}

@@ -13,6 +13,7 @@ import (
 	"testing"
 
 	"github.com/sebdah/goldie/v2"
+	"github.com/stretchr/testify/assert"
 )
 
 //go:generate go test . -run TestDistribution -update -clean
@@ -89,5 +90,36 @@ func (w w64) Sum64() uint64 {
 func wrap64(f func() hash.Hash) func() hash.Hash64 {
 	return func() hash.Hash64 {
 		return w64{f()}
+	}
+}
+
+func TestSummariseState(t *testing.T) {
+	testCases := []struct {
+		name string
+		s    state
+		me   string
+
+		expSummary string
+	}{
+		{name: "empty state", expSummary: ""},
+		{name: "just me",
+			s: state{"test": 0}, me: "test",
+			expSummary: "'test' [me] => rank 0",
+		},
+		{name: "non-leader in rink",
+			s: state{"mem45": 0, "mem20": 1, "mem53": 2}, me: "mem20",
+			expSummary: "'mem45' => rank 0, 'mem20' [me] => rank 1, 'mem53' => rank 2",
+		},
+		{name: "not a member in the rink",
+			s: state{"mem45": 0, "mem53": 1}, me: "mem20",
+			expSummary: "'mem45' => rank 0, 'mem53' => rank 1",
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			sum := summariseState(tc.s, tc.me)
+			assert.Equal(t, tc.expSummary, sum)
+		})
 	}
 }

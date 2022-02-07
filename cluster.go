@@ -97,10 +97,12 @@ func observeOnce(c *cluster, elec *concurrency.Election, ch chan<- struct{}) {
 
 	for res := range elec.Observe(c.ctx) {
 		v := res.Kvs[0].Value
-		c.logger.Debug(c.ctx, "observed election proposal", j.KS("val", string(v)))
 
 		if strings.HasPrefix(string(v), campaignPrefix) {
 			// Someone is the new leader
+			c.logger.Debug(c.ctx, "observed election proposal", j.MKV{
+				"val": string(v), "me": c.name,
+			})
 			if strings.HasSuffix(string(v), c.name) {
 				// We are leader, notify leadForever
 				ch <- struct{}{}
