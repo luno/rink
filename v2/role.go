@@ -119,7 +119,7 @@ func (r *Roles) unlockAll() {
 }
 
 func (r *Roles) updateRank(rank Rank) {
-	defer r.cond.Signal()
+	defer r.cond.Broadcast()
 
 	r.cond.L.Lock()
 	defer r.cond.L.Unlock()

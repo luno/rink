@@ -2,6 +2,7 @@ package rink
 
 import (
 	"context"
+	"sync"
 	"testing"
 	"time"
 
@@ -77,52 +78,72 @@ func TestRink_HandlesSessionClosure(t *testing.T) {
 	jtest.RequireNil(t, ctx2.Err())
 }
 
-type logCounter map[string]int
+type logCounter struct {
+	mu     sync.Mutex
+	counts map[string]int
+}
 
-func (l logCounter) Debug(ctx context.Context, msg string, ol ...jettison.Option) {
+func makeLogger() *logCounter {
+	return &logCounter{counts: make(map[string]int)}
+}
+
+func (l *logCounter) Debug(ctx context.Context, msg string, ol ...jettison.Option) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
 	ol = append(ol, log.WithLevel(log.LevelDebug))
 	log.Info(ctx, msg, ol...)
-	l["debug"] += 1
+	l.counts["debug"] += 1
 }
-func (l logCounter) Info(ctx context.Context, msg string, ol ...jettison.Option) {
+func (l *logCounter) Info(ctx context.Context, msg string, ol ...jettison.Option) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
 	log.Info(ctx, msg, ol...)
-	l["info"] += 1
+	l.counts["info"] += 1
 }
 
-func (l logCounter) Error(ctx context.Context, err error, ol ...jettison.Option) {
+func (l *logCounter) Error(ctx context.Context, err error, ol ...jettison.Option) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
 	log.Error(ctx, err, ol...)
-	l["error"] += 1
+	l.counts["error"] += 1
+}
+
+func (l *logCounter) Sum() int {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.counts["debug"] + l.counts["info"] + l.counts["error"]
 }
 
 func TestRinkLogs(t *testing.T) {
-	logger := make(logCounter)
+	logger := makeLogger()
 
 	cli := etcdForTesting(t)
-	s := New(cli, "testing", WithLogger(&logger))
+	s := New(cli, "testing", WithLogger(logger))
 
 	ctx := s.Roles.AwaitRole("test")
 
 	s.Shutdown()
 	<-ctx.Done()
 
-	assert.Greater(t, logger["debug"]+logger["info"]+logger["error"], 0)
+	assert.Greater(t, logger.Sum(), 0)
 }
 
 func TestRink_RecoversETCD(t *testing.T) {
+	t.Skip("requires manual intervention")
+	logger := makeLogger()
 	cli := etcdForTesting(t)
 
-	s := New(cli, "testing")
+	s := New(cli, "testing", WithLogger(logger))
 	t.Cleanup(s.Shutdown)
 
 	ctx := s.Roles.AwaitRole("test")
 
-	goodEndpoints := cli.Endpoints()
-	cli.SetEndpoints("http://garbageaddress:2379")
+	t.Log("Please shut down the etcd server.")
 
 	<-ctx.Done()
 	time.Sleep(time.Second)
 
-	cli.SetEndpoints(goodEndpoints...)
+	t.Log("Please start the etcd server.")
 
 	s.Roles.AwaitRole("test2")
 }

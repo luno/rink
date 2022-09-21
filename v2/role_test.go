@@ -2,7 +2,10 @@ package rink
 
 import (
 	"context"
+	"strconv"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 )
@@ -18,27 +21,32 @@ func (t *testRole) Lock() error             { t.Locked = true; return nil }
 func (t *testRole) Unlock() error           { t.Locked = false; return nil }
 
 type testDelegate struct {
-	t    *testing.T
-	role *testRole
+	t     *testing.T
+	roles map[string]*testRole
 }
 
-func delegateForTesting(t *testing.T, r *testRole) *testDelegate {
-	return &testDelegate{t: t, role: r}
+func delegateForTesting(t *testing.T, roles ...*testRole) *testDelegate {
+	rm := make(map[string]*testRole)
+	for _, r := range roles {
+		rm[r.Role()] = r
+	}
+	return &testDelegate{t: t, roles: rm}
 }
 
 func (t testDelegate) Create(role string) (RoleContext, error) {
-	if t.role != nil {
-		assert.Equal(t.t, t.role.S, role)
-		return t.role, nil
+	r, ok := t.roles[role]
+	if !ok {
+		panic("cannot create role")
 	}
-	panic("cannot create role")
+	return r, nil
 }
 
 func (t testDelegate) Assign(rank Rank, role string) bool {
 	if !rank.HaveRank {
 		return false
 	}
-	return t.role != nil && t.role.S == role
+	_, ok := t.roles[role]
+	return ok
 }
 
 func TestRoles_GetRole(t *testing.T) {
@@ -99,10 +107,38 @@ func TestRoles_UnlockAllLosesOldRoles(t *testing.T) {
 }
 
 func TestRoles_DontAssigned(t *testing.T) {
-	d := delegateForTesting(t, nil)
+	d := delegateForTesting(t)
 	r := NewRoles(d, RolesOptions{})
 
 	r.updateRank(Rank{MyRank: 0, HaveRank: true, Size: 1})
 	_, ok := r.Get("test")
 	assert.False(t, ok)
+}
+
+func TestRoles_MultipleAwait(t *testing.T) {
+	d := delegateForTesting(t,
+		&testRole{S: "role-0"}, &testRole{S: "role-1"},
+		&testRole{S: "role-2"}, &testRole{S: "role-3"},
+		&testRole{S: "role-4"},
+	)
+	r := NewRoles(d, RolesOptions{})
+
+	var wg sync.WaitGroup
+	for i := 0; i < 5; i++ {
+		wg.Add(1)
+		go func(role string) {
+			defer wg.Done()
+			r.AwaitRole(role)
+		}("role-" + strconv.Itoa(i))
+	}
+
+	time.Sleep(time.Second)
+	// r should get all the roles
+	r.updateRank(Rank{MyRank: 0, HaveRank: true, Size: 1})
+
+	// Will hang if we don't get roles
+	assert.Eventually(t, func() bool {
+		wg.Wait()
+		return true
+	}, 10*time.Second, time.Millisecond)
 }
