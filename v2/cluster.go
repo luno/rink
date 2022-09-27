@@ -97,6 +97,7 @@ func Run(ctx context.Context,
 	if err := putMemberKey(ctx, sess, o.memberKey); err != nil {
 		return err
 	}
+	o.Log.Debug(ctx, "joining cluster", j.KV("member", o.memberKey))
 	c := &cluster{
 		RankHandler: rankHandler,
 		Options:     o,
@@ -120,7 +121,11 @@ func putMemberKey(ctx context.Context, sess *concurrency.Session, key string) er
 	}
 	if !resp.Succeeded {
 		owner := resp.Responses[0].GetResponseRange().Kvs[0].Lease
-		return errors.Wrap(ErrMemberAlreadyExists, "", j.KV("owner_lease", owner))
+		return errors.Wrap(ErrMemberAlreadyExists, "", j.MKV{
+			"owner_lease": owner,
+			"member_key":  key,
+			"my_lease":    sess.Lease(),
+		})
 	}
 	return nil
 }
