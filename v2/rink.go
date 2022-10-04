@@ -8,16 +8,11 @@ import (
 	"github.com/luno/jettison"
 	"github.com/luno/jettison/errors"
 	"github.com/luno/jettison/j"
+	"github.com/luno/jettison/log"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.etcd.io/etcd/client/v3/concurrency"
 	"golang.org/x/sync/errgroup"
 )
-
-type Logger interface {
-	Debug(ctx context.Context, s string, ol ...jettison.Option)
-	Info(ctx context.Context, s string, ol ...jettison.Option)
-	Error(ctx context.Context, err error, ol ...jettison.Option)
-}
 
 type noopLogger struct{}
 
@@ -26,7 +21,7 @@ func (noopLogger) Info(context.Context, string, ...jettison.Option)  {}
 func (noopLogger) Error(context.Context, error, ...jettison.Option)  {}
 
 type options struct {
-	Log Logger
+	Log log.Interface
 
 	AssignRoleFunc func(role string, roleCount int32) int32
 
@@ -69,7 +64,7 @@ func WithRolesOptions(opts RolesOptions) Option {
 // WithLogger sets a logger to be used for logging in Rink.
 // It is also used for the Roles and Cluster logging if not specified in
 // ClusterOptions or RolesOptions
-func WithLogger(l Logger) Option {
+func WithLogger(l log.Interface) Option {
 	return func(o *options) {
 		o.Log = l
 	}

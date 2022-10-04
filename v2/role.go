@@ -76,7 +76,7 @@ type RolesOptions struct {
 	RoleNotify func(role string, locked bool)
 
 	// Log is used for logging messages and errors on role management
-	Log Logger
+	Log log.Interface
 }
 
 type Roles struct {

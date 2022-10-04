@@ -14,6 +14,7 @@ import (
 
 	"github.com/luno/jettison/errors"
 	"github.com/luno/jettison/j"
+	"github.com/luno/jettison/log"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.etcd.io/etcd/client/v3/concurrency"
 	"golang.org/x/sync/errgroup"
@@ -37,7 +38,7 @@ type ClusterOptions struct {
 	NotifyRank func(cluster string, member string, rank Rank)
 
 	// Log will log out messages and errors on cluster activity
-	Log Logger
+	Log log.Interface
 
 	// electionKey will contain the elected cluster state as
 	// an encoded blob
