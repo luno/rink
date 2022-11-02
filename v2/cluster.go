@@ -252,7 +252,9 @@ func (c *cluster) maybeLeadElection(ctx context.Context) error {
 }
 
 func (c *cluster) leadElection(ctx context.Context) error {
+	c.Options.Log.Debug(ctx, "leading election")
 	c.Options.NotifyLeader(c.Name, c.Options.MemberName, true)
+	defer c.Options.Log.Debug(ctx, "stopped leading election")
 	defer c.Options.NotifyLeader(c.Name, c.Options.MemberName, false)
 
 	r := c.getRanks()
@@ -275,7 +277,7 @@ func (c *cluster) leadElection(ctx context.Context) error {
 			}
 			c.Options.Log.Debug(ctx, "received cluster member changes")
 		case <-refresh.C:
-			c.Options.Log.Debug(ctx, "rebalancing cluster members")
+			refresh.Reset(time.Minute)
 		}
 
 		mem, err := listMembers(ctx, c.Session.Client(), c.Options.memberKeyPrefix)
@@ -283,8 +285,23 @@ func (c *cluster) leadElection(ctx context.Context) error {
 			return err
 		}
 		changes := getMemberChanges(mem, r, time.Now(), c.Options.NewMemberWait)
-		r = getNewRanks(r, changes)
 
+		if len(changes.Waiting) > 0 {
+			nextMember := changes.Waiting[0]
+			balanceAt := mem[nextMember].Add(c.Options.NewMemberWait)
+			c.Options.Log.Debug(ctx, "next balance", j.KV("at", balanceAt))
+
+			if !refresh.Stop() {
+				<-refresh.C
+			}
+			refresh.Reset(time.Until(balanceAt))
+		}
+
+		if len(changes.Remained) == len(r) && len(changes.Added) == 0 {
+			continue
+		}
+
+		r = getNewRanks(r, changes)
 		c.Options.Log.Debug(ctx, "publishing state", j.KV("state", fmt.Sprintf("%+v", r)))
 
 		var buf bytes.Buffer
@@ -298,16 +315,6 @@ func (c *cluster) leadElection(ctx context.Context) error {
 		} else if err != nil {
 			return err
 		}
-
-		nextRefresh := time.Minute
-		if len(changes.Waiting) > 0 {
-			nextMember := changes.Waiting[0]
-			balanceAt := mem[nextMember].Add(c.Options.NewMemberWait)
-			c.Options.Log.Debug(ctx, "next balance", j.KV("at", balanceAt))
-			nextRefresh = time.Until(balanceAt)
-		}
-		refresh.Stop()
-		refresh = time.NewTimer(nextRefresh)
 	}
 }
 

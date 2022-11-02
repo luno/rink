@@ -1,9 +1,0 @@
-{
-  "linters": {
-    "golint": {
-      "type": "golint",
-      "include": "(\\.go$)",
-      "bin": ["minlint"]
-    }
-  }
-}

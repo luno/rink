@@ -133,6 +133,7 @@ func (c *testCluster) GoMember(name string) context.CancelFunc {
 		err = Run(ctx, sess, c.clusterName, rankHandler, ClusterOptions{
 			MemberName:    name,
 			NewMemberWait: 1 * time.Second,
+			Log:           log.Jettison{},
 		})
 		if errors.IsAny(err, context.Canceled, context.DeadlineExceeded) {
 			return nil

@@ -62,7 +62,9 @@ func (c *LockedContext) Lock() error {
 	} else if err != nil {
 		return errors.Wrap(err, "try lock")
 	}
-	c.lockCtx, c.cancel = context.WithCancel(c.ctx)
+	ctx, cancel := context.WithCancel(c.ctx)
+	ctx = log.ContextWith(ctx, j.KV("role", c.role))
+	c.lockCtx, c.cancel = ctx, cancel
 	return nil
 }
 
@@ -112,6 +114,7 @@ func (r *Roles) unlockAll() {
 	r.cond.L.Lock()
 	defer r.cond.L.Unlock()
 	for _, rc := range r.roles {
+		r.options.Log.Debug(rc.Context(), "role released due to shutdown")
 		_ = rc.Unlock()
 		r.options.RoleNotify(rc.Role(), false)
 	}
@@ -132,6 +135,7 @@ func (r *Roles) updateRank(rank Rank) {
 		toRelease = append(toRelease, rc)
 	}
 	for _, rc := range toRelease {
+		r.options.Log.Debug(rc.Context(), "role released due to rank change")
 		_ = rc.Unlock()
 		r.options.RoleNotify(rc.Role(), false)
 		delete(r.roles, rc.Role())
@@ -189,6 +193,8 @@ func (r *Roles) getOrCreateRoleUnsafe(role string) (context.Context, error) {
 	if err := rc.Lock(); err != nil {
 		return nil, err
 	}
+	ctx := rc.Context()
+	r.options.Log.Debug(ctx, "role acquired")
 	r.options.RoleNotify(rc.Role(), true)
 	r.roles[role] = rc
 	return rc.Context(), nil
