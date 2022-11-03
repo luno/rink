@@ -2,143 +2,213 @@ package rink
 
 import (
 	"context"
+	"math/rand"
+	"path"
 	"strconv"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/luno/jettison/jtest"
+	"github.com/luno/jettison/log"
 	"github.com/stretchr/testify/assert"
+	"go.etcd.io/etcd/client/v3/concurrency"
 )
 
-type testRole struct {
-	S      string
-	Locked bool
-}
-
-func (t testRole) Role() string             { return t.S }
-func (t testRole) Context() context.Context { return context.Background() }
-func (t *testRole) Lock() error             { t.Locked = true; return nil }
-func (t *testRole) Unlock() error           { t.Locked = false; return nil }
-
-type testDelegate struct {
-	t     *testing.T
-	roles map[string]*testRole
-}
-
-func delegateForTesting(t *testing.T, roles ...*testRole) *testDelegate {
-	rm := make(map[string]*testRole)
+func assigner(t *testing.T, roles ...string) AssignRoleFunc {
+	ass := make(map[string]bool)
 	for _, r := range roles {
-		rm[r.Role()] = r
+		ass[r] = true
 	}
-	return &testDelegate{t: t, roles: rm}
+	return func(role string, roleCount int32) int32 {
+		t.Log("asked to assign role", role)
+		if ass[role] {
+			return 0
+		}
+		return -1
+	}
 }
 
-func (t testDelegate) Create(role string) (RoleContext, error) {
-	r, ok := t.roles[role]
-	if !ok {
-		panic("cannot create role")
+func RolesForTesting(t *testing.T, ro RolesOptions) (*Roles, func()) {
+	if ro.Log == nil {
+		ro.Log = log.Jettison{}
 	}
-	return r, nil
-}
+	r := NewRoles(strconv.Itoa(rand.Int()), ro)
 
-func (t testDelegate) Assign(rank Rank, role string) bool {
-	if !rank.HaveRank {
-		return false
+	cli := etcdForTesting(t)
+	sess, err := concurrency.NewSession(cli)
+	jtest.RequireNil(t, err)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		err := r.assignRoles(ctx, sess)
+		jtest.Assert(t, context.Canceled, err)
+	}()
+
+	var stopped bool
+	stop := func() {
+		if stopped {
+			return
+		}
+		stopped = true
+		cancel()
+		wg.Wait()
 	}
-	_, ok := t.roles[role]
-	return ok
-}
 
-func TestRoles_GetRole(t *testing.T) {
-	d := delegateForTesting(t, &testRole{S: "test"})
-
-	r := NewRoles(d, RolesOptions{})
-	r.updateRank(Rank{MyRank: 0, HaveRank: true, Size: 1})
-
-	ctx, ok := r.Get("test")
-
-	assert.NotNil(t, ctx)
-	assert.True(t, ok)
+	t.Cleanup(stop)
+	return r, stop
 }
 
 func TestRoles_AwaitRole(t *testing.T) {
-	d := delegateForTesting(t, &testRole{S: "test"})
-	r := NewRoles(d, RolesOptions{})
+	r, _ := RolesForTesting(t, RolesOptions{})
 
-	done := make(chan struct{})
+	done := make(chan context.Context)
 	go func() {
 		ctx := r.AwaitRole("test")
 		assert.NotNil(t, ctx)
-		close(done)
+		done <- ctx
 	}()
 
-	r.updateRank(Rank{MyRank: 0, HaveRank: true, Size: 1})
+	r.updateRank(context.Background(), Rank{MyRank: 0, HaveRank: true, Size: 1})
 
-	_, open := <-done
-	assert.False(t, open)
+	ctx := <-done
+	jtest.AssertNil(t, ctx.Err())
 }
 
 func TestRoles_UpdateRankLosesOldRoles(t *testing.T) {
-	role := &testRole{S: "test"}
-	d := delegateForTesting(t, role)
-	r := NewRoles(d, RolesOptions{})
+	r, _ := RolesForTesting(t, RolesOptions{})
 
-	r.updateRank(Rank{MyRank: 0, HaveRank: true, Size: 1})
-	_, ok := r.Get("test")
-	assert.True(t, ok)
+	r.updateRank(context.Background(), Rank{MyRank: 0, HaveRank: true, Size: 1})
 
-	assert.True(t, role.Locked)
-	r.updateRank(Rank{})
-	assert.False(t, role.Locked)
+	ctx, err := r.AwaitRoleContext(context.Background(), "test")
+	jtest.RequireNil(t, err)
+
+	r.updateRank(context.Background(), Rank{})
+
+	<-ctx.Done()
 }
 
-func TestRoles_UnlockAllLosesOldRoles(t *testing.T) {
-	role := &testRole{S: "test"}
-	d := delegateForTesting(t, role)
-	r := NewRoles(d, RolesOptions{})
+func TestRoles_UpdateRankGainsRoles(t *testing.T) {
+	r, _ := RolesForTesting(t, RolesOptions{})
 
-	r.updateRank(Rank{MyRank: 0, HaveRank: true, Size: 1})
-	_, ok := r.Get("test")
-	assert.True(t, ok)
+	r.updateRank(context.Background(), Rank{})
+	time.AfterFunc(time.Second, func() {
+		r.updateRank(context.Background(), Rank{MyRank: 0, HaveRank: true, Size: 1})
+	})
 
-	assert.True(t, role.Locked)
-	r.unlockAll()
-	assert.False(t, role.Locked)
+	_, err := r.AwaitRoleContext(context.Background(), "test")
+	jtest.RequireNil(t, err)
 }
 
-func TestRoles_DontAssigned(t *testing.T) {
-	d := delegateForTesting(t)
-	r := NewRoles(d, RolesOptions{})
+func TestRoles_ResetLosesOldRoles(t *testing.T) {
+	r, stop := RolesForTesting(t, RolesOptions{})
 
-	r.updateRank(Rank{MyRank: 0, HaveRank: true, Size: 1})
-	_, ok := r.Get("test")
-	assert.False(t, ok)
+	r.updateRank(context.Background(), Rank{MyRank: 0, HaveRank: true, Size: 1})
+
+	ctx, err := r.AwaitRoleContext(context.Background(), "test")
+	jtest.RequireNil(t, err)
+
+	stop()
+	jtest.Require(t, context.Canceled, ctx.Err())
+}
+
+func TestRoles_DontAssign(t *testing.T) {
+	r, _ := RolesForTesting(t, RolesOptions{
+		Assign: assigner(t),
+	})
+
+	r.updateRank(context.Background(), Rank{MyRank: 0, HaveRank: true, Size: 1})
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	t.Cleanup(cancel)
+
+	_, err := r.AwaitRoleContext(ctx, "test")
+	jtest.Assert(t, context.DeadlineExceeded, err)
 }
 
 func TestRoles_MultipleAwait(t *testing.T) {
-	d := delegateForTesting(t,
-		&testRole{S: "role-0"}, &testRole{S: "role-1"},
-		&testRole{S: "role-2"}, &testRole{S: "role-3"},
-		&testRole{S: "role-4"},
-	)
-	r := NewRoles(d, RolesOptions{})
+	r, _ := RolesForTesting(t, RolesOptions{})
 
 	var wg sync.WaitGroup
 	for i := 0; i < 5; i++ {
 		wg.Add(1)
 		go func(role string) {
 			defer wg.Done()
-			r.AwaitRole(role)
+			_, err := r.AwaitRoleContext(context.Background(), role)
+			jtest.AssertNil(t, err)
 		}("role-" + strconv.Itoa(i))
 	}
 
 	time.Sleep(time.Second)
 	// r should get all the roles
-	r.updateRank(Rank{MyRank: 0, HaveRank: true, Size: 1})
+	r.updateRank(context.Background(), Rank{MyRank: 0, HaveRank: true, Size: 1})
 
 	// Will hang if we don't get roles
 	assert.Eventually(t, func() bool {
 		wg.Wait()
 		return true
-	}, 10*time.Second, time.Millisecond)
+	}, time.Second, 100*time.Millisecond)
+}
+
+func TestRoles_Get(t *testing.T) {
+	r, _ := RolesForTesting(t, RolesOptions{})
+	r.updateRank(context.Background(), Rank{})
+
+	_, ok := r.Get(context.Background(), "test")
+	assert.False(t, ok)
+
+	r.updateRank(context.Background(), Rank{MyRank: 0, HaveRank: true, Size: 1})
+
+	_, ok = r.Get(context.Background(), "test")
+	assert.True(t, ok)
+}
+
+func TestRoles_MutexAlreadyLocked(t *testing.T) {
+	r, _ := RolesForTesting(t, RolesOptions{AwaitRetry: 100 * time.Millisecond})
+
+	cli2 := etcdForTesting(t)
+	sess2, err := concurrency.NewSession(cli2)
+	jtest.RequireNil(t, err)
+	mu := concurrency.NewMutex(sess2, path.Join(r.namespace, "roles", "test"))
+
+	err = mu.Lock(context.Background())
+	jtest.RequireNil(t, err)
+
+	r.updateRank(context.Background(), Rank{HaveRank: true, MyRank: 0, Size: 1})
+
+	_, ok := r.Get(context.Background(), "test")
+	assert.False(t, ok)
+
+	go func() {
+		time.Sleep(time.Second)
+		err := mu.Unlock(context.Background())
+		jtest.AssertNil(t, err)
+	}()
+
+	_, err = r.AwaitRoleContext(context.Background(), "test")
+	jtest.AssertNil(t, err)
+
+}
+
+func TestRoles_AwaitCancel(t *testing.T) {
+	r, _ := RolesForTesting(t, RolesOptions{})
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Millisecond)
+	t.Cleanup(cancel)
+
+	_, err := r.AwaitRoleContext(ctx, "test")
+	jtest.Assert(t, context.DeadlineExceeded, err)
+}
+
+func TestRoles_GetUnassigned(t *testing.T) {
+	r, _ := RolesForTesting(t, RolesOptions{Assign: assigner(t)})
+
+	r.updateRank(context.Background(), Rank{HaveRank: true, MyRank: 0, Size: 1})
+	time.Sleep(time.Second)
+
+	_, ok := r.Get(context.Background(), "test")
+	assert.False(t, ok)
 }

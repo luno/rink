@@ -185,6 +185,17 @@ func TestGetNewRanks(t *testing.T) {
 				"dave":  2,
 			},
 		},
+		{name: "old members had big ranks",
+			changes: memberChanges{
+				Remained: []string{"alice"},
+				Replaced: map[string]string{"bob": "carol"},
+			},
+			last: ranks{"alice": 100, "bob": 101},
+			expRanks: map[string]int32{
+				"alice": 0,
+				"carol": 1,
+			},
+		},
 	}
 
 	for _, tc := range testCases {

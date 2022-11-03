@@ -18,11 +18,14 @@ func TestRink(t *testing.T) {
 	roles := make(map[string]bool)
 	s := New(cli, "testing",
 		WithClusterOptions(ClusterOptions{MemberName: "testing-pod-1"}),
-		WithRolesOptions(RolesOptions{RoleNotify: func(role string, locked bool) {
-			roles[role] = locked
-		}}),
+		WithRolesOptions(RolesOptions{
+			Notify: func(role string, locked bool) { roles[role] = locked },
+		}),
+		WithLogger(log.Jettison{}),
 	)
-	t.Cleanup(s.Shutdown)
+	t.Cleanup(func() {
+		s.Shutdown(context.Background())
+	})
 	ctx := s.Roles.AwaitRole("test")
 	jtest.RequireNil(t, ctx.Err())
 
@@ -34,14 +37,17 @@ func TestRink_DoesntAssign(t *testing.T) {
 
 	s := New(cli, "testing",
 		WithClusterOptions(ClusterOptions{MemberName: "testing-pod-1"}),
-		WithAssignRoleFunc(func(role string, rankCount int32) int32 {
-			return 100
-		}),
+		WithRolesOptions(RolesOptions{Assign: assigner(t)}),
 	)
-	t.Cleanup(s.Shutdown)
+	t.Cleanup(func() {
+		s.Shutdown(context.Background())
+	})
 
-	_, ok := s.Roles.Get("test")
-	assert.False(t, ok)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	t.Cleanup(cancel)
+
+	ctx, err := s.Roles.AwaitRoleContext(ctx, "test")
+	jtest.Assert(t, context.DeadlineExceeded, err)
 }
 
 func TestRink_CancelsOnShutdown(t *testing.T) {
@@ -50,13 +56,14 @@ func TestRink_CancelsOnShutdown(t *testing.T) {
 	roles := make(map[string]bool)
 	s := New(cli, "testing",
 		WithClusterOptions(ClusterOptions{MemberName: "testing-pod-1"}),
-		WithRolesOptions(RolesOptions{RoleNotify: func(role string, locked bool) {
-			roles[role] = locked
-		}}),
+		WithRolesOptions(RolesOptions{
+			Notify: func(role string, locked bool) { roles[role] = locked },
+		}),
+		WithLogger(log.Jettison{}),
 	)
 	ctx := s.Roles.AwaitRole("test")
 	assert.Equal(t, map[string]bool{"test": true}, roles)
-	s.Shutdown()
+	s.Shutdown(context.Background())
 	jtest.Assert(t, context.Canceled, ctx.Err())
 	assert.Equal(t, map[string]bool{"test": false}, roles)
 }
@@ -65,11 +72,21 @@ func TestRink_HandlesSessionClosure(t *testing.T) {
 	cli := etcdForTesting(t)
 	s := New(cli, "testing",
 		WithClusterOptions(ClusterOptions{MemberName: "testing-pod-1"}),
+		WithLogger(log.Jettison{}),
 	)
-	t.Cleanup(s.Shutdown)
+	t.Cleanup(func() {
+		s.Shutdown(context.Background())
+	})
 
 	ctx1 := s.Roles.AwaitRole("test")
-	s.currentSession.Orphan()
+
+	leases, err := s.cli.Lease.Leases(context.Background())
+	jtest.RequireNil(t, err)
+
+	for _, lease := range leases.Leases {
+		_, err := s.cli.Revoke(context.Background(), lease.ID)
+		jtest.RequireNil(t, err)
+	}
 
 	<-ctx1.Done()
 	jtest.Require(t, context.Canceled, ctx1.Err())
@@ -122,7 +139,7 @@ func TestRinkLogs(t *testing.T) {
 
 	ctx := s.Roles.AwaitRole("test")
 
-	s.Shutdown()
+	s.Shutdown(context.Background())
 	<-ctx.Done()
 
 	assert.Greater(t, logger.Sum(), 0)
@@ -134,7 +151,9 @@ func TestRink_RecoversETCD(t *testing.T) {
 	cli := etcdForTesting(t)
 
 	s := New(cli, "testing", WithLogger(logger))
-	t.Cleanup(s.Shutdown)
+	t.Cleanup(func() {
+		s.Shutdown(context.Background())
+	})
 
 	ctx := s.Roles.AwaitRole("test")
 

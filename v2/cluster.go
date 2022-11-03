@@ -89,7 +89,7 @@ func validateOptions(name string, o *ClusterOptions) error {
 func Run(ctx context.Context,
 	sess *concurrency.Session,
 	name string,
-	rankHandler func(Rank),
+	rankHandler func(context.Context, Rank),
 	o ClusterOptions,
 ) error {
 	if err := validateOptions(name, &o); err != nil {
@@ -134,7 +134,7 @@ func putMemberKey(ctx context.Context, sess *concurrency.Session, key string) er
 type ranks map[string]int32
 
 type cluster struct {
-	RankHandler func(Rank)
+	RankHandler func(context.Context, Rank)
 	Name        string
 	Options     ClusterOptions
 	Election    *concurrency.Election
@@ -205,8 +205,8 @@ func (c *cluster) runCluster(ctx context.Context) error {
 	return g.Wait()
 }
 
-func (c *cluster) changedRank(r Rank) {
-	c.RankHandler(r)
+func (c *cluster) changedRank(ctx context.Context, r Rank) {
+	c.RankHandler(ctx, r)
 	c.Options.NotifyRank(c.Name, c.Options.MemberName, r)
 }
 
@@ -215,8 +215,8 @@ func (c *cluster) observeElection(ctx context.Context) error {
 	defer c.Options.Log.Debug(ctx, "stopped observing etcd election")
 
 	rank := findMe(c.getRanks(), c.Options.MemberName)
-	c.changedRank(rank)
-	defer c.changedRank(Rank{})
+	c.changedRank(ctx, rank)
+	defer c.changedRank(ctx, Rank{})
 
 	for r := range c.Election.Observe(ctx) {
 		set, err := c.setRanks(&r)
@@ -229,7 +229,7 @@ func (c *cluster) observeElection(ctx context.Context) error {
 				continue
 			}
 			rank = newRank
-			c.changedRank(rank)
+			c.changedRank(ctx, rank)
 		}
 	}
 	return ctx.Err()

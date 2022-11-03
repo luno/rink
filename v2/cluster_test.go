@@ -113,7 +113,7 @@ func (c *testCluster) GoMember(name string) context.CancelFunc {
 		}()
 
 		var haveHadRank bool
-		rankHandler := func(rank Rank) {
+		rankHandler := func(ctx context.Context, rank Rank) {
 			select {
 			case c.rankLog <- rankChangeEvent{Member: name, Time: time.Now(), State: rank}:
 			default:
@@ -313,7 +313,7 @@ func TestSessionDuplicate(t *testing.T) {
 
 	name := "test-cluster"
 	opt := ClusterOptions{MemberName: "pod-1"}
-	rankNoop := func(Rank) {}
+	rankNoop := func(context.Context, Rank) {}
 
 	ctx1, cancel1 := context.WithCancel(context.Background())
 	done1 := make(chan struct{})

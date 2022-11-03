@@ -2,7 +2,6 @@ package rink
 
 import (
 	"context"
-	"sync"
 	"time"
 
 	"github.com/luno/jettison"
@@ -23,27 +22,12 @@ func (noopLogger) Error(context.Context, error, ...jettison.Option)  {}
 type options struct {
 	Log log.Interface
 
-	AssignRoleFunc func(role string, roleCount int32) int32
-
 	ClusterOptions ClusterOptions
 
 	RolesOptions RolesOptions
 }
 
 type Option func(*options)
-
-type AssignRoleFunc func(role string, roleCount int32) int32
-
-// WithAssignRoleFunc is used for passing a custom implementation that maps
-// roles onto ranks. The function should return a rank in the range [0, roleCount).
-// Alternatively, if the role cannot be mapped, it can return -1.
-// It is important that the assign role func always maps a given role+roleCount
-// to the same rank.
-func WithAssignRoleFunc(f func(role string, roleCount int32) int32) Option {
-	return func(o *options) {
-		o.AssignRoleFunc = f
-	}
-}
 
 // WithClusterOptions passes through specific options to the Cluster.
 // See ClusterOptions for more details.
@@ -71,9 +55,7 @@ func WithLogger(l log.Interface) Option {
 }
 
 func buildOptions(opts []Option) options {
-	o := options{
-		AssignRoleFunc: ConsistentHashRole,
-	}
+	var o options
 	for _, opt := range opts {
 		opt(&o)
 	}
@@ -106,16 +88,12 @@ type Rink struct {
 	options options
 
 	Roles *Roles
-
-	sessionMutex   sync.Mutex
-	currentSession *concurrency.Session
 }
 
 // New starts Rink and runs the Cluster.
 // Call Shutdown to stop and clean up rink roles.
 // Use Roles to access individual roles.
 func New(cli *clientv3.Client, name string, opts ...Option) *Rink {
-
 	ctx, cancel := context.WithCancel(context.Background())
 	s := &Rink{
 		cli:      cli,
@@ -126,7 +104,7 @@ func New(cli *clientv3.Client, name string, opts ...Option) *Rink {
 		name:    name,
 		options: buildOptions(opts),
 	}
-	s.Roles = NewRoles(rinkDelegate{s}, s.options.RolesOptions)
+	s.Roles = NewRoles(name, s.options.RolesOptions)
 
 	go s.run(ctx)
 	return s
@@ -134,10 +112,13 @@ func New(cli *clientv3.Client, name string, opts ...Option) *Rink {
 
 // Shutdown will synchronously release all locked roles, shutdown the cluster, and
 // revoke the current Session.
-func (s *Rink) Shutdown() {
-	s.options.Log.Debug(s.ctx, "shutting down rink")
+func (s *Rink) Shutdown(ctx context.Context) {
 	s.cancel()
-	<-s.finished
+	s.options.Log.Debug(s.ctx, "shutting down rink")
+	select {
+	case <-s.finished:
+	case <-ctx.Done():
+	}
 }
 
 func (s *Rink) run(ctx context.Context) {
@@ -157,46 +138,21 @@ func (s *Rink) run(ctx context.Context) {
 	}
 }
 
-func (s *Rink) newSession() (*concurrency.Session, error) {
-	s.sessionMutex.Lock()
-	defer s.sessionMutex.Unlock()
-	if s.currentSession != nil {
-		panic("existing session when creating new one")
-	}
-
-	sess, err := concurrency.NewSession(s.cli)
-	if err != nil {
-		return nil, errors.Wrap(err, "new etcd session")
-	}
-	s.currentSession = sess
-
-	return s.currentSession, nil
-}
-
-func (s *Rink) clearSession() {
-	s.sessionMutex.Lock()
-	defer s.sessionMutex.Unlock()
-
-	if s.currentSession == nil {
-		panic("session already cleared")
-	}
-	err := s.currentSession.Close()
-	if err != nil {
-		s.options.Log.Error(s.ctx, errors.Wrap(err, "close session"))
-	}
-	s.currentSession = nil
-}
-
 func (s *Rink) runOnce(ctx context.Context) error {
 	s.options.Log.Debug(ctx, "creating new session")
-	sess, err := s.newSession()
+	sess, err := concurrency.NewSession(s.cli)
 	if err != nil {
 		return err
 	}
 	s.options.Log.Debug(ctx, "created session", j.KV("etcd_lease", sess.Lease()))
 
-	defer s.clearSession()
-	defer s.Roles.unlockAll()
+	defer func() {
+		err := sess.Close()
+		if err != nil {
+			// NoReturnErr: Nowhere to return it
+			s.options.Log.Error(ctx, errors.Wrap(err, "session close"))
+		}
+	}()
 
 	eg, ctx := errgroup.WithContext(ctx)
 
@@ -208,33 +164,11 @@ func (s *Rink) runOnce(ctx context.Context) error {
 		return watchSession(ctx, sess)
 	})
 
+	eg.Go(func() error {
+		return s.Roles.assignRoles(ctx, sess)
+	})
+
 	return eg.Wait()
-}
-
-// rinkDelegate is a hidden type to satisfy RoleDelegate
-// without exposing methods on Rink
-type rinkDelegate struct {
-	*Rink
-}
-
-func (s rinkDelegate) Create(role string) (RoleContext, error) {
-	s.sessionMutex.Lock()
-	defer s.sessionMutex.Unlock()
-	if s.currentSession == nil {
-		return nil, errors.New("session finished")
-	}
-	return NewLockedContext(s.ctx, s.currentSession, s.name, role), nil
-}
-
-func (s rinkDelegate) Assign(rank Rank, role string) bool {
-	if !rank.HaveRank {
-		return false
-	}
-	roleRank := s.options.AssignRoleFunc(role, rank.Size)
-	if roleRank < 0 {
-		return false
-	}
-	return rank.MyRank == roleRank
 }
 
 func watchSession(ctx context.Context, sess *concurrency.Session) error {
