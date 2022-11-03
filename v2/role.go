@@ -45,6 +45,7 @@ type roleLockReq struct {
 
 func newRequest(ctx context.Context, role string) (roleLockReq, context.Context) {
 	ctx, cancel := context.WithCancel(ctx)
+	ctx = log.ContextWith(ctx, j.KV("role", role))
 	return roleLockReq{
 		Role:   role,
 		Cancel: cancel,
@@ -132,10 +133,12 @@ func (r *Roles) updateRank(ctx context.Context, rank Rank) {
 	}
 }
 
-func (r *Roles) createLock(ctx context.Context, sess *concurrency.Session, namespace, role string) (lockedContext, error) {
-	mu := concurrency.NewMutex(sess,
-		path.Join(namespace, "roles", role),
-	)
+func (r *Roles) mutexKey(role string) string {
+	return path.Join(r.namespace, "roles", role)
+}
+
+func (r *Roles) createLock(ctx context.Context, sess *concurrency.Session, role string) (lockedContext, error) {
+	mu := concurrency.NewMutex(sess, r.mutexKey(role))
 	err := mu.TryLock(ctx)
 	if err != nil {
 		return lockedContext{}, err
@@ -161,6 +164,8 @@ func (r *Roles) assignRoles(ctx context.Context, sess *concurrency.Session) erro
 	defer nextReRank.Broadcast()
 
 	locks := make(map[string]lockedContext)
+	// Track not assigned roles for notifying
+	notified := make(map[string]bool)
 
 	defer func() {
 		for role, lock := range locks {
@@ -199,7 +204,7 @@ func (r *Roles) assignRoles(ctx context.Context, sess *concurrency.Session) erro
 				l, ok := locks[req.Role]
 				var err error
 				if !ok {
-					l, err = r.createLock(ctx, sess, r.namespace, req.Role)
+					l, err = r.createLock(ctx, sess, req.Role)
 				}
 				if err != nil {
 					// NoReturnErr: Hand it back to the client to handle
@@ -213,8 +218,18 @@ func (r *Roles) assignRoles(ctx context.Context, sess *concurrency.Session) erro
 				// Return a channel for the client to get the next rank change
 				ret.WaitForChange = nextReRank.Wait()
 			}
+
+			if !ret.Locked && !notified[req.Role] {
+				r.options.Notify(req.Role, false)
+				notified[req.Role] = true
+			}
+
+			r.options.Log.Debug(ctx, "handled role request", j.MKV{
+				"role":   req.Role,
+				"locked": ret.Locked,
+				"err":    ret.Err != nil,
+			})
 			req.Receive <- ret
-			r.options.Log.Debug(ctx, "handled role request", j.KV("role", req.Role))
 
 		// Notifications from the cluster of a Rank change
 		// Unallocated any unassigned and Broadcast to any waiters
@@ -243,6 +258,7 @@ func (r *Roles) assignRoles(ctx context.Context, sess *concurrency.Session) erro
 	}
 }
 
+// Deprecated: Use AwaitRoleContext
 func (r *Roles) AwaitRole(role string) context.Context {
 	ctx, _ := r.AwaitRoleContext(context.Background(), role)
 	return ctx

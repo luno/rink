@@ -207,8 +207,108 @@ func TestRoles_GetUnassigned(t *testing.T) {
 	r, _ := RolesForTesting(t, RolesOptions{Assign: assigner(t)})
 
 	r.updateRank(context.Background(), Rank{HaveRank: true, MyRank: 0, Size: 1})
-	time.Sleep(time.Second)
 
 	_, ok := r.Get(context.Background(), "test")
 	assert.False(t, ok)
+}
+
+func TestRoles_NotifyCalledWhenNotAssigned(t *testing.T) {
+	locks := make(map[string]bool)
+	r, _ := RolesForTesting(t, RolesOptions{
+		Assign: assigner(t),
+		Notify: func(role string, locked bool) {
+			locks[role] = locked
+		},
+	})
+
+	r.updateRank(context.Background(), Rank{HaveRank: true, MyRank: 0, Size: 1})
+
+	_, ok := r.Get(context.Background(), "test")
+	assert.False(t, ok)
+
+	assert.Equal(t, map[string]bool{"test": false}, locks)
+}
+
+func TestRoles_NotifyNotCalledTwice(t *testing.T) {
+	locks := make(map[string]int)
+	r, _ := RolesForTesting(t, RolesOptions{
+		Assign: assigner(t),
+		Notify: func(role string, locked bool) {
+			locks[role]++
+		},
+	})
+
+	r.updateRank(context.Background(), Rank{HaveRank: true, MyRank: 0, Size: 1})
+
+	_, ok := r.Get(context.Background(), "test")
+	assert.False(t, ok)
+	_, ok = r.Get(context.Background(), "test")
+	assert.False(t, ok)
+
+	assert.Equal(t, map[string]int{"test": 1}, locks)
+}
+
+func TestRoles_NotifyCalledWhenAssigned(t *testing.T) {
+	locks := make(map[string]bool)
+
+	r, _ := RolesForTesting(t, RolesOptions{
+		Notify: func(role string, locked bool) {
+			locks[role] = locked
+		},
+	})
+	r.updateRank(context.Background(), Rank{})
+
+	_, ok := r.Get(context.Background(), "test")
+	assert.False(t, ok)
+
+	r.updateRank(context.Background(), Rank{HaveRank: true, MyRank: 0, Size: 1})
+
+	_, ok = r.Get(context.Background(), "test")
+	assert.True(t, ok)
+
+	assert.Equal(t, map[string]bool{"test": true}, locks)
+}
+
+func TestRoles_NotifyCalledOnceWhenAssigned(t *testing.T) {
+	locks := make(map[string]int)
+	r, _ := RolesForTesting(t, RolesOptions{
+		Notify: func(role string, locked bool) {
+			locks[role]++
+		},
+	})
+	r.updateRank(context.Background(), Rank{HaveRank: true, MyRank: 0, Size: 1})
+
+	_, ok := r.Get(context.Background(), "test")
+	assert.True(t, ok)
+
+	assert.Equal(t, map[string]int{"test": 1}, locks)
+}
+
+func TestRoles_MutexKeys(t *testing.T) {
+	testCases := []struct {
+		name string
+		r    Roles
+		role string
+
+		expKey string
+	}{
+		{name: "empty", expKey: "roles"},
+		{name: "namespace only",
+			r:      Roles{namespace: "test"},
+			expKey: "test/roles",
+		},
+		{name: "full key",
+			r:      Roles{namespace: "hello"},
+			role:   "world",
+			expKey: "hello/roles/world",
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			key := tc.r.mutexKey(tc.role)
+			assert.Equal(t, tc.expKey, key)
+		})
+	}
+
 }
