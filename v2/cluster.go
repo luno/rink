@@ -257,6 +257,14 @@ func (c *cluster) leadElection(ctx context.Context) error {
 	defer c.Options.Log.Debug(ctx, "stopped leading election")
 	defer c.Options.NotifyLeader(c.Name, c.Options.MemberName, false)
 
+	defer func() {
+		err := c.Election.Resign(ctx)
+		if err != nil {
+			// NoReturnErr: Log
+			c.Options.Log.Error(ctx, errors.Wrap(err, "resign"))
+		}
+	}()
+
 	r := c.getRanks()
 
 	watchChan := c.Session.Client().Watch(ctx, c.Options.memberKeyPrefix, clientv3.WithPrefix())

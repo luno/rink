@@ -155,6 +155,7 @@ func (s *Rink) runOnce(ctx context.Context) error {
 	}()
 
 	eg, ctx := errgroup.WithContext(ctx)
+	ctx = clientv3.WithRequireLeader(ctx)
 
 	eg.Go(func() error {
 		return Run(ctx, sess, s.name, s.Roles.updateRank, s.options.ClusterOptions)
@@ -166,6 +167,10 @@ func (s *Rink) runOnce(ctx context.Context) error {
 
 	eg.Go(func() error {
 		return s.Roles.assignRoles(ctx, sess)
+	})
+
+	eg.Go(func() error {
+		return watchForExpiredKeys(ctx, s.cli, s.name)
 	})
 
 	return eg.Wait()
