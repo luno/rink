@@ -258,7 +258,10 @@ func (c *cluster) leadElection(ctx context.Context) error {
 	defer c.Options.NotifyLeader(c.Name, c.Options.MemberName, false)
 
 	defer func() {
-		err := c.Election.Resign(ctx)
+		if c.Election.Key() == "" {
+			return
+		}
+		err := c.Election.Resign(c.Session.Client().Ctx())
 		if err != nil {
 			// NoReturnErr: Log
 			c.Options.Log.Error(ctx, errors.Wrap(err, "resign"))

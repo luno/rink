@@ -38,7 +38,7 @@ type testCluster struct {
 	rankLog chan rankChangeEvent
 }
 
-func etcdForTesting(t *testing.T) *clientv3.Client {
+func etcdForTesting(t testing.TB) *clientv3.Client {
 	config := clientv3.Config{
 		Endpoints:            []string{"http://localhost:2380", "http://localhost:2379"},
 		DialKeepAliveTime:    time.Second,
@@ -58,7 +58,7 @@ func etcdForTesting(t *testing.T) *clientv3.Client {
 	return cli
 }
 
-func newTestCluster(t *testing.T) *testCluster {
+func newTestCluster(t testing.TB) *testCluster {
 	cli := etcdForTesting(t)
 	ctx, cancel := context.WithCancel(context.Background())
 	g, ctx := errgroup.WithContext(ctx)

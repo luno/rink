@@ -46,7 +46,7 @@ func TestRink_DoesntAssign(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	t.Cleanup(cancel)
 
-	ctx, err := s.Roles.AwaitRoleContext(ctx, "test")
+	_, _, err := s.Roles.AwaitRoleContext(ctx, "test")
 	jtest.Assert(t, context.DeadlineExceeded, err)
 }
 

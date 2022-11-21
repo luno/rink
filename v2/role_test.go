@@ -15,7 +15,7 @@ import (
 	"go.etcd.io/etcd/client/v3/concurrency"
 )
 
-func assigner(t *testing.T, roles ...string) AssignRoleFunc {
+func assigner(t testing.TB, roles ...string) AssignRoleFunc {
 	ass := make(map[string]bool)
 	for _, r := range roles {
 		ass[r] = true
@@ -29,7 +29,7 @@ func assigner(t *testing.T, roles ...string) AssignRoleFunc {
 	}
 }
 
-func RolesForTesting(t *testing.T, ro RolesOptions) (*Roles, func()) {
+func RolesForTesting(t testing.TB, ro RolesOptions) (*Roles, func()) {
 	if ro.Log == nil {
 		ro.Log = log.Jettison{}
 	}
@@ -83,7 +83,7 @@ func TestRoles_UpdateRankLosesOldRoles(t *testing.T) {
 
 	r.updateRank(context.Background(), Rank{MyRank: 0, HaveRank: true, Size: 1})
 
-	ctx, err := r.AwaitRoleContext(context.Background(), "test")
+	ctx, _, err := r.AwaitRoleContext(context.Background(), "test")
 	jtest.RequireNil(t, err)
 
 	r.updateRank(context.Background(), Rank{})
@@ -99,7 +99,7 @@ func TestRoles_UpdateRankGainsRoles(t *testing.T) {
 		r.updateRank(context.Background(), Rank{MyRank: 0, HaveRank: true, Size: 1})
 	})
 
-	_, err := r.AwaitRoleContext(context.Background(), "test")
+	_, _, err := r.AwaitRoleContext(context.Background(), "test")
 	jtest.RequireNil(t, err)
 }
 
@@ -108,7 +108,7 @@ func TestRoles_ResetLosesOldRoles(t *testing.T) {
 
 	r.updateRank(context.Background(), Rank{MyRank: 0, HaveRank: true, Size: 1})
 
-	ctx, err := r.AwaitRoleContext(context.Background(), "test")
+	ctx, _, err := r.AwaitRoleContext(context.Background(), "test")
 	jtest.RequireNil(t, err)
 
 	stop()
@@ -125,7 +125,7 @@ func TestRoles_DontAssign(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	t.Cleanup(cancel)
 
-	_, err := r.AwaitRoleContext(ctx, "test")
+	_, _, err := r.AwaitRoleContext(ctx, "test")
 	jtest.Assert(t, context.DeadlineExceeded, err)
 }
 
@@ -137,7 +137,7 @@ func TestRoles_MultipleAwait(t *testing.T) {
 		wg.Add(1)
 		go func(role string) {
 			defer wg.Done()
-			_, err := r.AwaitRoleContext(context.Background(), role)
+			_, _, err := r.AwaitRoleContext(context.Background(), role)
 			jtest.AssertNil(t, err)
 		}("role-" + strconv.Itoa(i))
 	}
@@ -157,12 +157,12 @@ func TestRoles_Get(t *testing.T) {
 	r, _ := RolesForTesting(t, RolesOptions{})
 	r.updateRank(context.Background(), Rank{})
 
-	_, ok := r.Get(context.Background(), "test")
+	_, _, ok := r.Get(context.Background(), "test")
 	assert.False(t, ok)
 
 	r.updateRank(context.Background(), Rank{MyRank: 0, HaveRank: true, Size: 1})
 
-	_, ok = r.Get(context.Background(), "test")
+	_, _, ok = r.Get(context.Background(), "test")
 	assert.True(t, ok)
 }
 
@@ -179,7 +179,7 @@ func TestRoles_MutexAlreadyLocked(t *testing.T) {
 
 	r.updateRank(context.Background(), Rank{HaveRank: true, MyRank: 0, Size: 1})
 
-	_, ok := r.Get(context.Background(), "test")
+	_, _, ok := r.Get(context.Background(), "test")
 	assert.False(t, ok)
 
 	go func() {
@@ -188,7 +188,7 @@ func TestRoles_MutexAlreadyLocked(t *testing.T) {
 		jtest.AssertNil(t, err)
 	}()
 
-	_, err = r.AwaitRoleContext(context.Background(), "test")
+	_, _, err = r.AwaitRoleContext(context.Background(), "test")
 	jtest.AssertNil(t, err)
 
 }
@@ -199,7 +199,7 @@ func TestRoles_AwaitCancel(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Millisecond)
 	t.Cleanup(cancel)
 
-	_, err := r.AwaitRoleContext(ctx, "test")
+	_, _, err := r.AwaitRoleContext(ctx, "test")
 	jtest.Assert(t, context.DeadlineExceeded, err)
 }
 
@@ -208,7 +208,7 @@ func TestRoles_GetUnassigned(t *testing.T) {
 
 	r.updateRank(context.Background(), Rank{HaveRank: true, MyRank: 0, Size: 1})
 
-	_, ok := r.Get(context.Background(), "test")
+	_, _, ok := r.Get(context.Background(), "test")
 	assert.False(t, ok)
 }
 
@@ -223,7 +223,7 @@ func TestRoles_NotifyCalledWhenNotAssigned(t *testing.T) {
 
 	r.updateRank(context.Background(), Rank{HaveRank: true, MyRank: 0, Size: 1})
 
-	_, ok := r.Get(context.Background(), "test")
+	_, _, ok := r.Get(context.Background(), "test")
 	assert.False(t, ok)
 
 	assert.Equal(t, map[string]bool{"test": false}, locks)
@@ -240,9 +240,9 @@ func TestRoles_NotifyNotCalledTwice(t *testing.T) {
 
 	r.updateRank(context.Background(), Rank{HaveRank: true, MyRank: 0, Size: 1})
 
-	_, ok := r.Get(context.Background(), "test")
+	_, _, ok := r.Get(context.Background(), "test")
 	assert.False(t, ok)
-	_, ok = r.Get(context.Background(), "test")
+	_, _, ok = r.Get(context.Background(), "test")
 	assert.False(t, ok)
 
 	assert.Equal(t, map[string]int{"test": 1}, locks)
@@ -258,12 +258,12 @@ func TestRoles_NotifyCalledWhenAssigned(t *testing.T) {
 	})
 	r.updateRank(context.Background(), Rank{})
 
-	_, ok := r.Get(context.Background(), "test")
+	_, _, ok := r.Get(context.Background(), "test")
 	assert.False(t, ok)
 
 	r.updateRank(context.Background(), Rank{HaveRank: true, MyRank: 0, Size: 1})
 
-	_, ok = r.Get(context.Background(), "test")
+	_, _, ok = r.Get(context.Background(), "test")
 	assert.True(t, ok)
 
 	assert.Equal(t, map[string]bool{"test": true}, locks)
@@ -278,7 +278,7 @@ func TestRoles_NotifyCalledOnceWhenAssigned(t *testing.T) {
 	})
 	r.updateRank(context.Background(), Rank{HaveRank: true, MyRank: 0, Size: 1})
 
-	_, ok := r.Get(context.Background(), "test")
+	_, _, ok := r.Get(context.Background(), "test")
 	assert.True(t, ok)
 
 	assert.Equal(t, map[string]int{"test": 1}, locks)
@@ -310,5 +310,4 @@ func TestRoles_MutexKeys(t *testing.T) {
 			assert.Equal(t, tc.expKey, key)
 		})
 	}
-
 }

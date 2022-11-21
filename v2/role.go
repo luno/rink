@@ -37,18 +37,18 @@ type RolesOptions struct {
 type roleLockReq struct {
 	// The role we need
 	Role string
-	// The cancel function for the context we want to return to the client
-	Cancel context.CancelFunc
 	// The channel to send the response on
 	Receive chan roleLockResp
 }
 
-func newRequest(ctx context.Context, role string) (roleLockReq, context.Context) {
-	ctx, cancel := context.WithCancel(ctx)
-	ctx = log.ContextWith(ctx, j.KV("role", role))
+type roleContext struct {
+	WaitForCancel <-chan struct{}
+	Cancel        context.CancelFunc
+}
+
+func newRequest(role string) roleLockReq {
 	return roleLockReq{
-		Role:   role,
-		Cancel: cancel,
+		Role: role,
 		// Construct a channel for assignRoles to deliver on
 		// we can re-use this channel after it has been drained,
 		// so we must make sure that we receive from this channel
@@ -56,7 +56,7 @@ func newRequest(ctx context.Context, role string) (roleLockReq, context.Context)
 		// We use a buffered channel so that if the client goes
 		// away before assignRoles responds, then we don't block
 		Receive: make(chan roleLockResp, 1),
-	}, ctx
+	}
 }
 
 // roleLockResp is returned by assign roles
@@ -72,13 +72,24 @@ type roleLockResp struct {
 	// WaitForChange is a channel that will be closed when the rank changes
 	// this will be populated when the role is not currently assigned
 	WaitForChange <-chan struct{}
+
+	// OnRoleUnlock
+	OnRoleUnlock <-chan struct{}
 }
 
 // lockedContext holds a mutex and all the context cancellation functions that need
 // to be called when the mutex is Unlocked
 type lockedContext struct {
-	mu       *concurrency.Mutex
-	toCancel []context.CancelFunc
+	mu  *concurrency.Mutex
+	sig *Signal
+}
+
+func cancelOnClose(ctx context.Context, cancel context.CancelFunc, onClose <-chan struct{}) {
+	select {
+	case <-ctx.Done():
+	case <-onClose:
+		cancel()
+	}
 }
 
 // Roles is an abstraction of the two sides of the role allocation API.
@@ -144,15 +155,29 @@ func (r *Roles) createLock(ctx context.Context, sess *concurrency.Session, role 
 		return lockedContext{}, err
 	}
 	r.options.Notify(role, true)
-	return lockedContext{mu: mu}, nil
+	return lockedContext{mu: mu, sig: NewSignal()}, nil
 }
 
 func (r *Roles) unlockRole(ctx context.Context, role string, lock lockedContext) error {
-	for _, c := range lock.toCancel {
-		c()
-	}
+	lock.sig.Broadcast()
 	r.options.Notify(role, false)
 	return lock.mu.Unlock(ctx)
+}
+
+func (r *Roles) getOrCreateLock(ctx context.Context,
+	sess *concurrency.Session,
+	role string, locks map[string]lockedContext,
+) (lockedContext, error) {
+	l, ok := locks[role]
+	if ok {
+		return l, nil
+	}
+	l, err := r.createLock(ctx, sess, role)
+	if err != nil {
+		return lockedContext{}, err
+	}
+	locks[role] = l
+	return l, nil
 }
 
 func (r *Roles) assignRoles(ctx context.Context, sess *concurrency.Session) error {
@@ -201,18 +226,13 @@ func (r *Roles) assignRoles(ctx context.Context, sess *concurrency.Session) erro
 		case req := <-r.lockers:
 			var ret roleLockResp
 			if r.assign(rank, req.Role) {
-				l, ok := locks[req.Role]
-				var err error
-				if !ok {
-					l, err = r.createLock(ctx, sess, req.Role)
-				}
+				l, err := r.getOrCreateLock(ctx, sess, req.Role, locks)
 				if err != nil {
 					// NoReturnErr: Hand it back to the client to handle
 					ret.Err = err
 				} else {
-					l.toCancel = append(l.toCancel, req.Cancel)
-					locks[req.Role] = l
 					ret.Locked = true
+					ret.OnRoleUnlock = l.sig.Wait()
 				}
 			} else {
 				// Return a channel for the client to get the next rank change
@@ -260,7 +280,7 @@ func (r *Roles) assignRoles(ctx context.Context, sess *concurrency.Session) erro
 
 // Deprecated: Use AwaitRoleContext
 func (r *Roles) AwaitRole(role string) context.Context {
-	ctx, _ := r.AwaitRoleContext(context.Background(), role)
+	ctx, _, _ := r.AwaitRoleContext(context.Background(), role)
 	return ctx
 }
 
@@ -269,8 +289,9 @@ func (r *Roles) AwaitRole(role string) context.Context {
 // If we're assigned the role, we attach the context to the role and return the context.
 // If we're not assigned the role, we wait until the Rank changes
 // If there's an error locking the role, we will wait for RolesOptions.AwaitRetry
-func (r *Roles) AwaitRoleContext(ctx context.Context, role string) (context.Context, error) {
-	req, ctx := newRequest(ctx, role)
+func (r *Roles) AwaitRoleContext(ctx context.Context, role string) (context.Context, context.CancelFunc, error) {
+	ctx = log.ContextWith(ctx, j.KV("role", role))
+	req := newRequest(role)
 	// Whenever we can read from deliver we will send req to the lockers channel
 	deliver := Immediate()
 	// Wait will be provided by assignRoles, it will close when there is a change in rank
@@ -285,11 +306,13 @@ func (r *Roles) AwaitRoleContext(ctx context.Context, role string) (context.Cont
 				// Nil the deliver channel, won't re-deliver until failure
 				deliver = nil
 			case <-ctx.Done():
-				return nil, ctx.Err()
+				return nil, nil, ctx.Err()
 			}
 		case resp := <-req.Receive:
 			if resp.Locked {
-				return ctx, nil
+				ctx, cancel := context.WithCancel(ctx)
+				go cancelOnClose(ctx, cancel, resp.OnRoleUnlock)
+				return ctx, cancel, nil
 			}
 			// If the base context has been cancelled we can continue the loop
 			// and the ctx.Done will drop us out
@@ -303,21 +326,21 @@ func (r *Roles) AwaitRoleContext(ctx context.Context, role string) (context.Cont
 			wait = nil
 			deliver = Immediate()
 		case <-ctx.Done():
-			return nil, ctx.Err()
+			return nil, nil, ctx.Err()
 		}
 	}
 }
 
 // Get will check Roles to see if we have the role and return.
 // Crucial difference to AwaitRoleContext is that it won't wait for rank changes until we DO have the role.
-func (r *Roles) Get(ctx context.Context, role string) (context.Context, bool) {
-	req, ctx := newRequest(ctx, role)
+func (r *Roles) Get(ctx context.Context, role string) (context.Context, context.CancelFunc, bool) {
+	req := newRequest(role)
 	r.options.Log.Debug(ctx, "client requesting role", j.KV("role", req.Role))
 
 	select {
 	case r.lockers <- req:
 	case <-ctx.Done():
-		return nil, false
+		return nil, nil, false
 	}
 
 	select {
@@ -325,13 +348,15 @@ func (r *Roles) Get(ctx context.Context, role string) (context.Context, bool) {
 		if resp.Err != nil {
 			// NoReturnErr: Log the error and return false
 			r.options.Log.Error(ctx, resp.Err)
-			return nil, false
+			return nil, nil, false
 		}
 		if !resp.Locked {
-			return nil, false
+			return nil, nil, false
 		}
-		return ctx, true
+		ctx, cancel := context.WithCancel(ctx)
+		go cancelOnClose(ctx, cancel, resp.OnRoleUnlock)
+		return ctx, cancel, true
 	case <-ctx.Done():
-		return nil, false
+		return nil, nil, false
 	}
 }
