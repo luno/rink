@@ -11,37 +11,35 @@ import (
 )
 
 const etcdScanPage = 1000
-const monitorInterval = time.Minute
+const monitorInterval = 5 * time.Minute
 
-func knownLeases(ctx context.Context, cli *clientv3.Client) (map[clientv3.LeaseID]time.Time, error) {
+func knownLeases(ctx context.Context, cli *clientv3.Client) (map[clientv3.LeaseID]int64, error) {
 	leases, err := cli.Lease.Leases(ctx)
 	if err != nil {
 		return nil, errors.Wrap(err, "leases")
 	}
-	ret := make(map[clientv3.LeaseID]time.Time)
+	ret := make(map[clientv3.LeaseID]int64)
 	for _, l := range leases.Leases {
 		ttlResp, err := cli.Lease.TimeToLive(ctx, l.ID)
 		if err != nil {
 			return nil, err
 		}
-		now := time.Now()
-		var expiresAt time.Time
-		if ttlResp.TTL >= 0 {
-			expiresAt = now.Add(time.Duration(ttlResp.TTL) * time.Second)
-		} else if ttlResp.TTL == -1 {
+		ret[l.ID] = ttlResp.TTL
+		if ttlResp.TTL == -1 {
 			log.Info(ctx, "found expired lease", j.KV("lease_id", l.ID))
 		}
-		ret[l.ID] = expiresAt
 	}
+	log.Info(ctx, "found leases", j.KV("lease_count", len(ret)))
 	return ret, nil
 }
 
 func scanForExpiredKeys(ctx context.Context, cli *clientv3.Client,
 	prefix string,
-	leases map[clientv3.LeaseID]time.Time,
+	leases map[clientv3.LeaseID]int64,
 ) (map[string]clientv3.LeaseID, error) {
 	var rev int64
 	expired := make(map[string]clientv3.LeaseID)
+	var scanned int
 	for {
 		resp, err := cli.Get(ctx, prefix,
 			clientv3.WithMinCreateRev(rev),
@@ -52,13 +50,11 @@ func scanForExpiredKeys(ctx context.Context, cli *clientv3.Client,
 		if err != nil {
 			return nil, errors.Wrap(err, "get")
 		}
-
+		scanned += len(resp.Kvs)
 		for _, kv := range resp.Kvs {
 			rev = kv.CreateRevision + 1
-			if kv.Lease == 0 {
-				continue
-			}
-			if leases[clientv3.LeaseID(kv.Lease)].IsZero() {
+			keyTTL := leases[clientv3.LeaseID(kv.Lease)]
+			if keyTTL <= 0 {
 				expired[string(kv.Key)] = clientv3.LeaseID(kv.Lease)
 			}
 		}
@@ -67,6 +63,7 @@ func scanForExpiredKeys(ctx context.Context, cli *clientv3.Client,
 			break
 		}
 	}
+	log.Info(ctx, "scanned keys", j.KV("count", scanned))
 	return expired, nil
 }
 
@@ -87,9 +84,10 @@ func (h *keyHistory) checkForExpiredKeys(ctx context.Context, cli *clientv3.Clie
 	// to avoid issues with temporary consistency
 	for key, lease := range expired {
 		if lease == h.lastExpired[key] {
-			log.Info(ctx, "found an expired key", j.MKV{
+			err := errors.New("found an expired key", j.MKV{
 				"key": key, "lease_id": lease,
 			})
+			log.Error(ctx, err)
 		}
 	}
 	h.lastExpired = expired
