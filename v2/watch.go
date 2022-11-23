@@ -25,11 +25,8 @@ func knownLeases(ctx context.Context, cli *clientv3.Client) (map[clientv3.LeaseI
 			return nil, err
 		}
 		ret[l.ID] = ttlResp.TTL
-		if ttlResp.TTL == -1 {
-			log.Info(ctx, "found expired lease", j.KV("lease_id", l.ID))
-		}
 	}
-	log.Info(ctx, "found leases", j.KV("lease_count", len(ret)))
+	log.Debug(ctx, "found leases", j.KV("lease_count", len(ret)))
 	return ret, nil
 }
 
@@ -63,7 +60,7 @@ func scanForExpiredKeys(ctx context.Context, cli *clientv3.Client,
 			break
 		}
 	}
-	log.Info(ctx, "scanned keys", j.KV("count", scanned))
+	log.Debug(ctx, "scanned keys", j.KV("count", scanned))
 	return expired, nil
 }
 
