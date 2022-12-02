@@ -287,18 +287,18 @@ func TestRoles_NotifyCalledOnceWhenAssigned(t *testing.T) {
 func TestRoles_MutexKeys(t *testing.T) {
 	testCases := []struct {
 		name string
-		r    Roles
+		r    *Roles
 		role string
 
 		expKey string
 	}{
-		{name: "empty", expKey: "roles"},
+		{name: "empty", r: &Roles{}, expKey: "roles"},
 		{name: "namespace only",
-			r:      Roles{namespace: "test"},
+			r:      &Roles{namespace: "test"},
 			expKey: "test/roles",
 		},
 		{name: "full key",
-			r:      Roles{namespace: "hello"},
+			r:      &Roles{namespace: "hello"},
 			role:   "world",
 			expKey: "hello/roles/world",
 		},
@@ -310,4 +310,44 @@ func TestRoles_MutexKeys(t *testing.T) {
 			assert.Equal(t, tc.expKey, key)
 		})
 	}
+}
+
+func TestRoles_ReturnsSameLegacyContext(t *testing.T) {
+	r, _ := RolesForTesting(t, RolesOptions{})
+
+	r.updateRank(context.Background(), Rank{MyRank: 0, HaveRank: true, Size: 1})
+
+	ctx1 := r.AwaitRole("leader")
+	ctx2 := r.AwaitRole("leader")
+
+	assert.Equal(t, ctx1, ctx2)
+}
+
+func TestRoles_LegacyCancel(t *testing.T) {
+	r, _ := RolesForTesting(t, RolesOptions{})
+	r.updateRank(context.Background(), Rank{MyRank: 0, HaveRank: true, Size: 1})
+
+	ctx1 := r.AwaitRole("leader")
+	ctx2 := r.AwaitRole("leader")
+
+	r.updateRank(context.Background(), Rank{})
+	<-ctx1.Done()
+	jtest.Assert(t, context.Canceled, ctx1.Err())
+	jtest.Assert(t, context.Canceled, ctx2.Err())
+}
+
+func TestRoles_LegacyResumeAfterCancel(t *testing.T) {
+	r, _ := RolesForTesting(t, RolesOptions{})
+
+	r.updateRank(context.Background(), Rank{MyRank: 0, HaveRank: true, Size: 1})
+	ctx1 := r.AwaitRole("leader")
+	r.updateRank(context.Background(), Rank{})
+
+	<-ctx1.Done()
+	jtest.Assert(t, context.Canceled, ctx1.Err())
+	r.updateRank(context.Background(), Rank{MyRank: 0, HaveRank: true, Size: 1})
+
+	ctx2 := r.AwaitRole("leader")
+	jtest.AssertNil(t, ctx2.Err())
+	jtest.Assert(t, context.Canceled, ctx1.Err())
 }

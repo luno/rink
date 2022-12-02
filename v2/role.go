@@ -3,6 +3,7 @@ package rink
 import (
 	"context"
 	"path"
+	"sync"
 	"time"
 
 	"github.com/luno/jettison/errors"
@@ -103,6 +104,9 @@ type Roles struct {
 
 	lockers    chan roleLockReq
 	rankChange chan Rank
+
+	legacyContexts map[string]context.Context
+	legacyMu       sync.Mutex
 }
 
 func NewRoles(namespace string, opts RolesOptions) *Roles {
@@ -123,6 +127,8 @@ func NewRoles(namespace string, opts RolesOptions) *Roles {
 		options:    opts,
 		lockers:    make(chan roleLockReq),
 		rankChange: make(chan Rank),
+
+		legacyContexts: make(map[string]context.Context),
 	}
 }
 
@@ -280,7 +286,16 @@ func (r *Roles) assignRoles(ctx context.Context, sess *concurrency.Session) erro
 
 // Deprecated: Use AwaitRoleContext
 func (r *Roles) AwaitRole(role string) context.Context {
-	ctx, _, _ := r.AwaitRoleContext(context.Background(), role)
+	r.legacyMu.Lock()
+	defer r.legacyMu.Unlock()
+
+	ctx, ok := r.legacyContexts[role]
+	if ok && ctx.Err() == nil {
+		return ctx
+	}
+
+	ctx, _, _ = r.AwaitRoleContext(context.Background(), role)
+	r.legacyContexts[role] = ctx
 	return ctx
 }
 
