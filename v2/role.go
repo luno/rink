@@ -105,8 +105,7 @@ type Roles struct {
 	lockers    chan roleLockReq
 	rankChange chan Rank
 
-	legacyContexts map[string]context.Context
-	legacyMu       sync.Mutex
+	legacyRoles sync.Map
 }
 
 func NewRoles(namespace string, opts RolesOptions) *Roles {
@@ -127,8 +126,6 @@ func NewRoles(namespace string, opts RolesOptions) *Roles {
 		options:    opts,
 		lockers:    make(chan roleLockReq),
 		rankChange: make(chan Rank),
-
-		legacyContexts: make(map[string]context.Context),
 	}
 }
 
@@ -284,18 +281,25 @@ func (r *Roles) assignRoles(ctx context.Context, sess *concurrency.Session) erro
 	}
 }
 
+type legacyRole struct {
+	mu  sync.Mutex
+	ctx context.Context
+}
+
 // Deprecated: Use AwaitRoleContext
 func (r *Roles) AwaitRole(role string) context.Context {
-	r.legacyMu.Lock()
-	defer r.legacyMu.Unlock()
+	a, _ := r.legacyRoles.LoadOrStore(role, &legacyRole{})
+	lr := a.(*legacyRole)
 
-	ctx, ok := r.legacyContexts[role]
-	if ok && ctx.Err() == nil {
-		return ctx
+	lr.mu.Lock()
+	defer lr.mu.Unlock()
+
+	if lr.ctx != nil && lr.ctx.Err() == nil {
+		return lr.ctx
 	}
 
-	ctx, _, _ = r.AwaitRoleContext(context.Background(), role)
-	r.legacyContexts[role] = ctx
+	ctx, _, _ := r.AwaitRoleContext(context.Background(), role)
+	lr.ctx = ctx
 	return ctx
 }
 

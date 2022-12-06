@@ -351,3 +351,20 @@ func TestRoles_LegacyResumeAfterCancel(t *testing.T) {
 	jtest.AssertNil(t, ctx2.Err())
 	jtest.Assert(t, context.Canceled, ctx1.Err())
 }
+
+func TestRoles_LegacyNotBlockedByOthers(t *testing.T) {
+	r, _ := RolesForTesting(t, RolesOptions{
+		Assign: assigner(t, "have"),
+	})
+
+	r.updateRank(context.Background(), Rank{MyRank: 0, HaveRank: true, Size: 1})
+
+	go func() {
+		r.AwaitRole("have-not")
+	}()
+
+	assert.Eventually(t, func() bool {
+		r.AwaitRole("have")
+		return true
+	}, time.Second, 100*time.Millisecond)
+}
