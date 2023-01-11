@@ -98,7 +98,10 @@ func Run(ctx context.Context,
 	if err := putMemberKey(ctx, sess, o.memberKey); err != nil {
 		return err
 	}
-	o.Log.Debug(ctx, "joining cluster", j.KV("member", o.memberKey))
+	o.Log.Info(ctx, "joining rink cluster", j.MKV{
+		"member": o.memberKey,
+		"lease":  sess.Lease(),
+	})
 	c := &cluster{
 		RankHandler: rankHandler,
 		Options:     o,

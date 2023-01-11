@@ -19,7 +19,7 @@ func TestConsistentHashRole(t *testing.T) {
 	}{
 		{name: "zero role count returns invalid role",
 			expRank: -1},
-		{name: "empty role is zero",
+		{name: "empty role can be ranked",
 			roleCount: 1,
 			expRank:   0,
 		},

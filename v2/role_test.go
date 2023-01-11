@@ -9,9 +9,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/luno/jettison"
+	"github.com/luno/jettison/errors"
 	"github.com/luno/jettison/jtest"
 	"github.com/luno/jettison/log"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"go.etcd.io/etcd/client/v3/concurrency"
 )
 
@@ -29,11 +32,15 @@ func assigner(t testing.TB, roles ...string) AssignRoleFunc {
 	}
 }
 
-func RolesForTesting(t testing.TB, ro RolesOptions) (*Roles, func()) {
+func randomName() string {
+	return strconv.Itoa(rand.Int())
+}
+
+func RolesForTesting(t testing.TB, ns string, ro RolesOptions) (*Roles, func()) {
 	if ro.Log == nil {
 		ro.Log = log.Jettison{}
 	}
-	r := NewRoles(strconv.Itoa(rand.Int()), ro)
+	r := NewRoles(ns, ro)
 
 	cli := etcdForTesting(t)
 	sess, err := concurrency.NewSession(cli)
@@ -63,7 +70,7 @@ func RolesForTesting(t testing.TB, ro RolesOptions) (*Roles, func()) {
 }
 
 func TestRoles_AwaitRole(t *testing.T) {
-	r, _ := RolesForTesting(t, RolesOptions{})
+	r, _ := RolesForTesting(t, randomName(), RolesOptions{})
 
 	done := make(chan context.Context)
 	go func() {
@@ -79,7 +86,7 @@ func TestRoles_AwaitRole(t *testing.T) {
 }
 
 func TestRoles_UpdateRankLosesOldRoles(t *testing.T) {
-	r, _ := RolesForTesting(t, RolesOptions{})
+	r, _ := RolesForTesting(t, randomName(), RolesOptions{})
 
 	r.updateRank(context.Background(), Rank{MyRank: 0, HaveRank: true, Size: 1})
 
@@ -92,7 +99,7 @@ func TestRoles_UpdateRankLosesOldRoles(t *testing.T) {
 }
 
 func TestRoles_UpdateRankGainsRoles(t *testing.T) {
-	r, _ := RolesForTesting(t, RolesOptions{})
+	r, _ := RolesForTesting(t, randomName(), RolesOptions{})
 
 	r.updateRank(context.Background(), Rank{})
 	time.AfterFunc(time.Second, func() {
@@ -104,7 +111,7 @@ func TestRoles_UpdateRankGainsRoles(t *testing.T) {
 }
 
 func TestRoles_ResetLosesOldRoles(t *testing.T) {
-	r, stop := RolesForTesting(t, RolesOptions{})
+	r, stop := RolesForTesting(t, randomName(), RolesOptions{})
 
 	r.updateRank(context.Background(), Rank{MyRank: 0, HaveRank: true, Size: 1})
 
@@ -116,7 +123,7 @@ func TestRoles_ResetLosesOldRoles(t *testing.T) {
 }
 
 func TestRoles_DontAssign(t *testing.T) {
-	r, _ := RolesForTesting(t, RolesOptions{
+	r, _ := RolesForTesting(t, randomName(), RolesOptions{
 		Assign: assigner(t),
 	})
 
@@ -130,7 +137,7 @@ func TestRoles_DontAssign(t *testing.T) {
 }
 
 func TestRoles_MultipleAwait(t *testing.T) {
-	r, _ := RolesForTesting(t, RolesOptions{})
+	r, _ := RolesForTesting(t, randomName(), RolesOptions{})
 
 	var wg sync.WaitGroup
 	for i := 0; i < 5; i++ {
@@ -154,7 +161,7 @@ func TestRoles_MultipleAwait(t *testing.T) {
 }
 
 func TestRoles_Get(t *testing.T) {
-	r, _ := RolesForTesting(t, RolesOptions{})
+	r, _ := RolesForTesting(t, randomName(), RolesOptions{})
 	r.updateRank(context.Background(), Rank{})
 
 	_, _, ok := r.Get(context.Background(), "test")
@@ -167,7 +174,7 @@ func TestRoles_Get(t *testing.T) {
 }
 
 func TestRoles_MutexAlreadyLocked(t *testing.T) {
-	r, _ := RolesForTesting(t, RolesOptions{AwaitRetry: 100 * time.Millisecond})
+	r, _ := RolesForTesting(t, randomName(), RolesOptions{AwaitRetry: 100 * time.Millisecond})
 
 	cli2 := etcdForTesting(t)
 	sess2, err := concurrency.NewSession(cli2)
@@ -194,7 +201,7 @@ func TestRoles_MutexAlreadyLocked(t *testing.T) {
 }
 
 func TestRoles_AwaitCancel(t *testing.T) {
-	r, _ := RolesForTesting(t, RolesOptions{})
+	r, _ := RolesForTesting(t, randomName(), RolesOptions{})
 
 	ctx, cancel := context.WithTimeout(context.Background(), time.Millisecond)
 	t.Cleanup(cancel)
@@ -204,7 +211,7 @@ func TestRoles_AwaitCancel(t *testing.T) {
 }
 
 func TestRoles_GetUnassigned(t *testing.T) {
-	r, _ := RolesForTesting(t, RolesOptions{Assign: assigner(t)})
+	r, _ := RolesForTesting(t, randomName(), RolesOptions{Assign: assigner(t)})
 
 	r.updateRank(context.Background(), Rank{HaveRank: true, MyRank: 0, Size: 1})
 
@@ -214,7 +221,7 @@ func TestRoles_GetUnassigned(t *testing.T) {
 
 func TestRoles_NotifyCalledWhenNotAssigned(t *testing.T) {
 	locks := make(map[string]bool)
-	r, _ := RolesForTesting(t, RolesOptions{
+	r, _ := RolesForTesting(t, randomName(), RolesOptions{
 		Assign: assigner(t),
 		Notify: func(role string, locked bool) {
 			locks[role] = locked
@@ -231,7 +238,7 @@ func TestRoles_NotifyCalledWhenNotAssigned(t *testing.T) {
 
 func TestRoles_NotifyNotCalledTwice(t *testing.T) {
 	locks := make(map[string]int)
-	r, _ := RolesForTesting(t, RolesOptions{
+	r, _ := RolesForTesting(t, randomName(), RolesOptions{
 		Assign: assigner(t),
 		Notify: func(role string, locked bool) {
 			locks[role]++
@@ -251,7 +258,7 @@ func TestRoles_NotifyNotCalledTwice(t *testing.T) {
 func TestRoles_NotifyCalledWhenAssigned(t *testing.T) {
 	locks := make(map[string]bool)
 
-	r, _ := RolesForTesting(t, RolesOptions{
+	r, _ := RolesForTesting(t, randomName(), RolesOptions{
 		Notify: func(role string, locked bool) {
 			locks[role] = locked
 		},
@@ -271,7 +278,7 @@ func TestRoles_NotifyCalledWhenAssigned(t *testing.T) {
 
 func TestRoles_NotifyCalledOnceWhenAssigned(t *testing.T) {
 	locks := make(map[string]int)
-	r, _ := RolesForTesting(t, RolesOptions{
+	r, _ := RolesForTesting(t, randomName(), RolesOptions{
 		Notify: func(role string, locked bool) {
 			locks[role]++
 		},
@@ -313,7 +320,7 @@ func TestRoles_MutexKeys(t *testing.T) {
 }
 
 func TestRoles_ReturnsSameLegacyContext(t *testing.T) {
-	r, _ := RolesForTesting(t, RolesOptions{})
+	r, _ := RolesForTesting(t, randomName(), RolesOptions{})
 
 	r.updateRank(context.Background(), Rank{MyRank: 0, HaveRank: true, Size: 1})
 
@@ -324,7 +331,7 @@ func TestRoles_ReturnsSameLegacyContext(t *testing.T) {
 }
 
 func TestRoles_LegacyCancel(t *testing.T) {
-	r, _ := RolesForTesting(t, RolesOptions{})
+	r, _ := RolesForTesting(t, randomName(), RolesOptions{})
 	r.updateRank(context.Background(), Rank{MyRank: 0, HaveRank: true, Size: 1})
 
 	ctx1 := r.AwaitRole("leader")
@@ -337,7 +344,7 @@ func TestRoles_LegacyCancel(t *testing.T) {
 }
 
 func TestRoles_LegacyResumeAfterCancel(t *testing.T) {
-	r, _ := RolesForTesting(t, RolesOptions{})
+	r, _ := RolesForTesting(t, randomName(), RolesOptions{})
 
 	r.updateRank(context.Background(), Rank{MyRank: 0, HaveRank: true, Size: 1})
 	ctx1 := r.AwaitRole("leader")
@@ -353,7 +360,7 @@ func TestRoles_LegacyResumeAfterCancel(t *testing.T) {
 }
 
 func TestRoles_LegacyNotBlockedByOthers(t *testing.T) {
-	r, _ := RolesForTesting(t, RolesOptions{
+	r, _ := RolesForTesting(t, randomName(), RolesOptions{
 		Assign: assigner(t, "have"),
 	})
 
@@ -367,4 +374,51 @@ func TestRoles_LegacyNotBlockedByOthers(t *testing.T) {
 		r.AwaitRole("have")
 		return true
 	}, time.Second, 100*time.Millisecond)
+}
+
+func TestRoles_MultipleWaitersOnEmpty(t *testing.T) {
+	r, _ := RolesForTesting(t, randomName(), RolesOptions{})
+
+	r.updateRank(context.Background(), Rank{MyRank: 0, HaveRank: true, Size: 1})
+
+	_, _, err := r.AwaitRoleContext(context.Background(), "")
+	jtest.AssertNil(t, err)
+	_, _, err2 := r.AwaitRoleContext(context.Background(), "")
+	jtest.AssertNil(t, err2)
+}
+
+type expMutexError struct{ t *testing.T }
+
+func (e expMutexError) Debug(ctx context.Context, msg string, opts ...jettison.Option) {
+	log.Debug(ctx, msg, opts...)
+}
+
+func (e expMutexError) Info(ctx context.Context, msg string, opts ...jettison.Option) {
+	log.Info(ctx, msg, opts...)
+}
+
+func (e expMutexError) Error(ctx context.Context, err error, ol ...jettison.Option) {
+	var je *errors.JettisonError
+	require.True(e.t, errors.As(err, &je))
+	_, ok := je.GetKey("held_by_lease")
+	require.True(e.t, ok)
+}
+
+func TestRoles_RoleClashError(t *testing.T) {
+	l := expMutexError{t: t}
+
+	n := randomName()
+	r1, _ := RolesForTesting(t, n, RolesOptions{Assign: assigner(t, "clash")})
+	r2, _ := RolesForTesting(t, n, RolesOptions{Log: l, Assign: assigner(t, "clash")})
+
+	r1.updateRank(context.Background(), Rank{MyRank: 0, HaveRank: true, Size: 1})
+	r2.updateRank(context.Background(), Rank{MyRank: 0, HaveRank: true, Size: 1})
+
+	_, _, err := r1.AwaitRoleContext(context.Background(), "clash")
+	jtest.AssertNil(t, err)
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	t.Cleanup(cancel)
+	_, _, err2 := r2.AwaitRoleContext(ctx, "clash")
+	jtest.Assert(t, context.DeadlineExceeded, err2)
 }

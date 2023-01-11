@@ -9,6 +9,7 @@ import (
 	"github.com/luno/jettison/errors"
 	"github.com/luno/jettison/j"
 	"github.com/luno/jettison/log"
+	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.etcd.io/etcd/client/v3/concurrency"
 )
 
@@ -152,10 +153,18 @@ func (r *Roles) mutexKey(role string) string {
 }
 
 func (r *Roles) createLock(ctx context.Context, sess *concurrency.Session, role string) (lockedContext, error) {
-	mu := concurrency.NewMutex(sess, r.mutexKey(role))
+	key := r.mutexKey(role)
+	mu := concurrency.NewMutex(sess, key)
 	err := mu.TryLock(ctx)
+	if errors.Is(err, concurrency.ErrLocked) {
+		// NoReturnErr: Will return it, just try to embellish it a bit first
+		resp, getErr := sess.Client().Get(ctx, key, clientv3.WithFirstCreate()...)
+		if getErr == nil && len(resp.Kvs) > 0 {
+			err = errors.Wrap(err, "", j.KV("held_by_lease", resp.Kvs[0].Lease))
+		}
+	}
 	if err != nil {
-		return lockedContext{}, err
+		return lockedContext{}, errors.Wrap(err, "")
 	}
 	r.options.Notify(role, true)
 	return lockedContext{mu: mu, sig: NewSignal()}, nil
@@ -319,7 +328,7 @@ func (r *Roles) AwaitRoleContext(ctx context.Context, role string) (context.Cont
 	for {
 		select {
 		case <-deliver:
-			r.options.Log.Debug(ctx, "client requesting role", j.KV("role", req.Role))
+			r.options.Log.Debug(ctx, "client requesting role")
 			select {
 			case r.lockers <- req:
 				// Nil the deliver channel, won't re-deliver until failure
