@@ -4,7 +4,9 @@ import (
 	"context"
 	"fmt"
 	"math/rand"
+	"os"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -20,6 +22,13 @@ import (
 	"golang.org/x/sync/errgroup"
 	"google.golang.org/grpc"
 )
+
+func etcdEndpoints() []string {
+	if v, ok := os.LookupEnv("TESTING_ETCD_ENDPOINTS"); ok {
+		return strings.Split(v, ",")
+	}
+	return []string{"http://localhost:2380", "http://localhost:2379"}
+}
 
 type rankChangeEvent struct {
 	Member string
@@ -40,7 +49,7 @@ type testCluster struct {
 
 func etcdForTesting(t testing.TB) *clientv3.Client {
 	config := clientv3.Config{
-		Endpoints:            []string{"http://localhost:2380", "http://localhost:2379"},
+		Endpoints:            etcdEndpoints(),
 		DialKeepAliveTime:    time.Second,
 		DialKeepAliveTimeout: time.Second,
 		DialTimeout:          time.Second,
@@ -49,7 +58,7 @@ func etcdForTesting(t testing.TB) *clientv3.Client {
 	}
 	cli, err := clientv3.New(config)
 	if errors.Is(err, context.DeadlineExceeded) {
-		t.Skip("etcd server not accessible")
+		t.Fatal("etcd server not accessible")
 	}
 	jtest.RequireNil(t, err)
 	t.Cleanup(func() {
