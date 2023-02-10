@@ -36,9 +36,28 @@ func randomName() string {
 	return strconv.Itoa(rand.Int())
 }
 
+type testLogger struct {
+	testing.TB
+}
+
+func (t testLogger) Debug(ctx context.Context, msg string, ol ...jettison.Option) {
+	t.Log("DEBUG", msg)
+	log.Debug(ctx, msg, ol...)
+}
+
+func (t testLogger) Info(ctx context.Context, msg string, ol ...jettison.Option) {
+	t.Log("INFO", msg)
+	log.Info(ctx, msg, ol...)
+}
+
+func (t testLogger) Error(ctx context.Context, err error, ol ...jettison.Option) {
+	t.Log("ERROR", err)
+	log.Error(ctx, err, ol...)
+}
+
 func RolesForTesting(t testing.TB, ns string, ro RolesOptions) (*Roles, func()) {
 	if ro.Log == nil {
-		ro.Log = log.Jettison{}
+		ro.Log = testLogger{t}
 	}
 	r := NewRoles(ns, ro)
 
@@ -63,6 +82,7 @@ func RolesForTesting(t testing.TB, ns string, ro RolesOptions) (*Roles, func()) 
 		stopped = true
 		cancel()
 		wg.Wait()
+		jtest.RequireNil(t, sess.Close())
 	}
 
 	t.Cleanup(stop)
@@ -390,14 +410,18 @@ func TestRoles_MultipleWaitersOnEmpty(t *testing.T) {
 type expMutexError struct{ t *testing.T }
 
 func (e expMutexError) Debug(ctx context.Context, msg string, opts ...jettison.Option) {
+	e.t.Log("DEBUG", msg)
 	log.Debug(ctx, msg, opts...)
 }
 
 func (e expMutexError) Info(ctx context.Context, msg string, opts ...jettison.Option) {
+	e.t.Log("INFO", msg)
 	log.Info(ctx, msg, opts...)
 }
 
 func (e expMutexError) Error(ctx context.Context, err error, ol ...jettison.Option) {
+	e.t.Log("ERROR", err)
+	log.Error(ctx, err, ol...)
 	var je *errors.JettisonError
 	require.True(e.t, errors.As(err, &je))
 	_, ok := je.GetKey("held_by_lease")
@@ -408,17 +432,24 @@ func TestRoles_RoleClashError(t *testing.T) {
 	l := expMutexError{t: t}
 
 	n := randomName()
+
+	// Get and lock the role with r1
 	r1, _ := RolesForTesting(t, n, RolesOptions{Assign: assigner(t, "clash")})
-	r2, _ := RolesForTesting(t, n, RolesOptions{Log: l, Assign: assigner(t, "clash")})
-
 	r1.updateRank(context.Background(), Rank{MyRank: 0, HaveRank: true, Size: 1})
-	r2.updateRank(context.Background(), Rank{MyRank: 0, HaveRank: true, Size: 1})
-
 	_, _, err := r1.AwaitRoleContext(context.Background(), "clash")
 	jtest.AssertNil(t, err)
 
+	// Now we'll try and get the role again
+	r2, _ := RolesForTesting(t, n, RolesOptions{
+		Log:         l,
+		LockTimeout: time.Millisecond,
+		Assign:      assigner(t, "clash"),
+	})
+	r2.updateRank(context.Background(), Rank{MyRank: 0, HaveRank: true, Size: 1})
+
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
-	t.Cleanup(cancel)
+	defer cancel()
+
 	_, _, err2 := r2.AwaitRoleContext(ctx, "clash")
 	jtest.Assert(t, context.DeadlineExceeded, err2)
 }

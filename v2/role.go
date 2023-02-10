@@ -24,6 +24,10 @@ type RolesOptions struct {
 	// a lock. We will wait this amount of time to try again.
 	AwaitRetry time.Duration
 
+	// LockTimeout is how long we will wait when attempting to get a role lock.
+	// TODO(adam): Replace timeout with an asynchronous blocking call to Lock
+	LockTimeout time.Duration
+
 	// Assign is used for passing a custom implementation that maps
 	// roles onto ranks. The function should return a rank in the range [0, roleCount).
 	// Alternatively, if the role cannot be mapped, it can return -1.
@@ -116,6 +120,9 @@ func NewRoles(namespace string, opts RolesOptions) *Roles {
 	if opts.AwaitRetry == 0 {
 		opts.AwaitRetry = 10 * time.Second
 	}
+	if opts.LockTimeout == 0 {
+		opts.LockTimeout = time.Second
+	}
 	if opts.Assign == nil {
 		opts.Assign = ConsistentHashRole
 	}
@@ -155,11 +162,25 @@ func (r *Roles) mutexKey(role string) string {
 func (r *Roles) createLock(ctx context.Context, sess *concurrency.Session, role string) (lockedContext, error) {
 	key := r.mutexKey(role)
 	mu := concurrency.NewMutex(sess, key)
-	err := mu.TryLock(ctx)
-	if errors.Is(err, concurrency.ErrLocked) {
+
+	var err error
+	if r.options.LockTimeout > 0 {
+		lockCtx, cancel := context.WithTimeout(ctx, r.options.LockTimeout)
+		defer cancel()
+		err = mu.Lock(lockCtx)
+	} else {
+		err = mu.TryLock(ctx)
+	}
+	if errors.IsAny(err, context.DeadlineExceeded, concurrency.ErrLocked) {
+		err = errors.Wrap(err, "another process has locked the role")
 		// NoReturnErr: Will return it, just try to embellish it a bit first
 		resp, getErr := sess.Client().Get(ctx, key, clientv3.WithFirstCreate()...)
-		if getErr == nil && len(resp.Kvs) > 0 {
+		if getErr != nil {
+			// NoReturnErr: Will return the original error
+			r.options.Log.Error(ctx, errors.Wrap(getErr, "getting lock details"))
+		} else if len(resp.Kvs) == 0 {
+			err = errors.Wrap(err, "", j.KV("held_by_lease", "null"))
+		} else {
 			err = errors.Wrap(err, "", j.KV("held_by_lease", resp.Kvs[0].Lease))
 		}
 	}
