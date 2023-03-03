@@ -11,6 +11,7 @@ import (
 	"github.com/luno/jettison/log"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.etcd.io/etcd/client/v3/concurrency"
+	"golang.org/x/sync/errgroup"
 )
 
 type AssignRoleFunc func(role string, roleCount int32) int32
@@ -47,11 +48,6 @@ type roleLockReq struct {
 	Receive chan roleLockResp
 }
 
-type roleContext struct {
-	WaitForCancel <-chan struct{}
-	Cancel        context.CancelFunc
-}
-
 func newRequest(role string) roleLockReq {
 	return roleLockReq{
 		Role: role,
@@ -86,8 +82,13 @@ type roleLockResp struct {
 // lockedContext holds a mutex and all the context cancellation functions that need
 // to be called when the mutex is Unlocked
 type lockedContext struct {
-	mu  *concurrency.Mutex
-	sig *Signal
+	role string
+	mu   *concurrency.Mutex
+	sig  *Signal
+}
+
+func (l lockedContext) Cancel() {
+	l.sig.Broadcast()
 }
 
 func cancelOnClose(ctx context.Context, cancel context.CancelFunc, onClose <-chan struct{}) {
@@ -155,17 +156,21 @@ func (r *Roles) updateRank(ctx context.Context, rank Rank) {
 	}
 }
 
-func (r *Roles) mutexKey(role string) string {
-	return path.Join(r.namespace, "roles", role)
+func mutexKey(namespace, role string) string {
+	return path.Join(namespace, "roles", role)
 }
 
-func (r *Roles) createLock(ctx context.Context, sess *concurrency.Session, role string) (lockedContext, error) {
-	key := r.mutexKey(role)
+func createLock(ctx context.Context,
+	sess *concurrency.Session,
+	namespace string, role string,
+	lockTimeout time.Duration,
+) (lockedContext, error) {
+	key := mutexKey(namespace, role)
 	mu := concurrency.NewMutex(sess, key)
 
 	var err error
-	if r.options.LockTimeout > 0 {
-		lockCtx, cancel := context.WithTimeout(ctx, r.options.LockTimeout)
+	if lockTimeout > 0 {
+		lockCtx, cancel := context.WithTimeout(ctx, lockTimeout)
 		defer cancel()
 		err = mu.Lock(lockCtx)
 	} else {
@@ -177,7 +182,7 @@ func (r *Roles) createLock(ctx context.Context, sess *concurrency.Session, role 
 		resp, getErr := sess.Client().Get(ctx, key, clientv3.WithFirstCreate()...)
 		if getErr != nil {
 			// NoReturnErr: Will return the original error
-			r.options.Log.Error(ctx, errors.Wrap(getErr, "getting lock details"))
+			log.Error(ctx, errors.Wrap(getErr, "getting lock details"))
 		} else if len(resp.Kvs) == 0 {
 			err = errors.Wrap(err, "", j.KV("held_by_lease", "null"))
 		} else {
@@ -187,14 +192,7 @@ func (r *Roles) createLock(ctx context.Context, sess *concurrency.Session, role 
 	if err != nil {
 		return lockedContext{}, errors.Wrap(err, "")
 	}
-	r.options.Notify(role, true)
-	return lockedContext{mu: mu, sig: NewSignal()}, nil
-}
-
-func (r *Roles) unlockRole(ctx context.Context, role string, lock lockedContext) error {
-	lock.sig.Broadcast()
-	r.options.Notify(role, false)
-	return lock.mu.Unlock(ctx)
+	return lockedContext{role: role, mu: mu, sig: NewSignal()}, nil
 }
 
 func (r *Roles) getOrCreateLock(ctx context.Context,
@@ -205,10 +203,11 @@ func (r *Roles) getOrCreateLock(ctx context.Context,
 	if ok {
 		return l, nil
 	}
-	l, err := r.createLock(ctx, sess, role)
+	l, err := createLock(ctx, sess, r.namespace, role, r.options.LockTimeout)
 	if err != nil {
 		return lockedContext{}, err
 	}
+	r.options.Notify(role, true)
 	locks[role] = l
 	return l, nil
 }
@@ -226,12 +225,11 @@ func (r *Roles) assignRoles(ctx context.Context, sess *concurrency.Session) erro
 	notified := make(map[string]bool)
 
 	defer func() {
-		for role, lock := range locks {
-			err := r.unlockRole(sess.Client().Ctx(), role, lock)
-			if err != nil {
-				// NoReturnErr: Log, nowhere to return
-				r.options.Log.Error(ctx, err)
-			}
+		// Cancel all the contexts here but don't need to unlock the mutexes
+		// because they will be expired by etcd when we close the session
+		for _, lock := range locks {
+			lock.Cancel()
+			r.options.Notify(lock.role, false)
 		}
 	}()
 
@@ -291,15 +289,17 @@ func (r *Roles) assignRoles(ctx context.Context, sess *concurrency.Session) erro
 				j.MKV{"rank": rank.MyRank, "size": rank.Size, "have": rank.HaveRank},
 			)
 
-			for role, lock := range locks {
-				if !r.assign(rank, role) {
-					if err := r.unlockRole(ctx, role, lock); err != nil {
-						// NoReturnErr: Log
-						r.options.Log.Error(ctx, errors.Wrap(err, "unlock"))
-					}
-					r.options.Log.Debug(ctx, "unlocked role", j.KV("role", role))
-					delete(locks, role)
+			var toUnlock []lockedContext
+			for _, lock := range locks {
+				if !r.assign(rank, lock.role) {
+					lock.Cancel()
+					r.options.Notify(lock.role, false)
+					delete(locks, lock.role)
+					toUnlock = append(toUnlock, lock)
 				}
+			}
+			if err := r.unlockMutexes(ctx, toUnlock); err != nil {
+				return err
 			}
 			// Tell any waiting goroutines that they should try again
 			// to see if they're assigned now
@@ -309,6 +309,21 @@ func (r *Roles) assignRoles(ctx context.Context, sess *concurrency.Session) erro
 			return ctx.Err()
 		}
 	}
+}
+
+func (r *Roles) unlockMutexes(ctx context.Context, locks []lockedContext) error {
+	eg, ctx := errgroup.WithContext(ctx)
+	for _, l := range locks {
+		l := l
+		eg.Go(func() error {
+			if err := l.mu.Unlock(ctx); err != nil {
+				return errors.Wrap(err, "unable to unlock role", j.KV("role", l.role))
+			}
+			r.options.Log.Debug(ctx, "unlocked role", j.KV("role", l.role))
+			return nil
+		})
+	}
+	return eg.Wait()
 }
 
 type legacyRole struct {

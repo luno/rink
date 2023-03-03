@@ -145,6 +145,7 @@ func (s *Rink) runOnce(ctx context.Context) error {
 		return err
 	}
 	s.options.Log.Debug(ctx, "created session", j.KV("etcd_lease", sess.Lease()))
+	defer s.options.Log.Debug(ctx, "ended session", j.KV("etcd_lease", sess.Lease()))
 
 	defer func() {
 		err := sess.Close()
@@ -166,11 +167,11 @@ func (s *Rink) runOnce(ctx context.Context) error {
 	})
 
 	eg.Go(func() error {
-		return s.Roles.assignRoles(ctx, sess)
+		return watchForExpiredKeys(ctx, s.cli, s.name)
 	})
 
 	eg.Go(func() error {
-		return watchForExpiredKeys(ctx, s.cli, s.name)
+		return s.Roles.assignRoles(ctx, sess)
 	})
 
 	return eg.Wait()

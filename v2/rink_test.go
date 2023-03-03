@@ -70,7 +70,7 @@ func TestRink_CancelsOnShutdown(t *testing.T) {
 
 func TestRink_HandlesSessionClosure(t *testing.T) {
 	cli := etcdForTesting(t)
-	s := New(cli, "testing",
+	s := New(cli, randomName(),
 		WithClusterOptions(ClusterOptions{MemberName: "testing-pod-1"}),
 		WithLogger(log.Jettison{}),
 	)

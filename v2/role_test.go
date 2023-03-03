@@ -116,6 +116,10 @@ func TestRoles_UpdateRankLosesOldRoles(t *testing.T) {
 	r.updateRank(context.Background(), Rank{})
 
 	<-ctx.Done()
+
+	// Call update rank again to give the inner goroutine time to fully process the last updateRank
+	// as the ctx here will be canceled before the mutex unlocks
+	r.updateRank(context.Background(), Rank{})
 }
 
 func TestRoles_UpdateRankGainsRoles(t *testing.T) {
@@ -313,27 +317,26 @@ func TestRoles_NotifyCalledOnceWhenAssigned(t *testing.T) {
 
 func TestRoles_MutexKeys(t *testing.T) {
 	testCases := []struct {
-		name string
-		r    *Roles
-		role string
-
-		expKey string
+		name      string
+		namespace string
+		role      string
+		expKey    string
 	}{
-		{name: "empty", r: &Roles{}, expKey: "roles"},
+		{name: "empty", expKey: "roles"},
 		{name: "namespace only",
-			r:      &Roles{namespace: "test"},
-			expKey: "test/roles",
+			namespace: "test",
+			expKey:    "test/roles",
 		},
 		{name: "full key",
-			r:      &Roles{namespace: "hello"},
-			role:   "world",
-			expKey: "hello/roles/world",
+			namespace: "hello",
+			role:      "world",
+			expKey:    "hello/roles/world",
 		},
 	}
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			key := tc.r.mutexKey(tc.role)
+			key := mutexKey(tc.namespace, tc.role)
 			assert.Equal(t, tc.expKey, key)
 		})
 	}
@@ -407,49 +410,70 @@ func TestRoles_MultipleWaitersOnEmpty(t *testing.T) {
 	jtest.AssertNil(t, err2)
 }
 
-type expMutexError struct{ t *testing.T }
+func TestRoles_ManyRolesReleasedOnClose(t *testing.T) {
+	r, stop := RolesForTesting(t, randomName(), RolesOptions{})
 
-func (e expMutexError) Debug(ctx context.Context, msg string, opts ...jettison.Option) {
-	e.t.Log("DEBUG", msg)
-	log.Debug(ctx, msg, opts...)
+	r.updateRank(context.Background(), Rank{MyRank: 0, HaveRank: true, Size: 1})
+
+	var contexts []context.Context
+	for i := 1; i <= 200; i++ {
+		ctx, _, err := r.AwaitRoleContext(context.Background(), strconv.Itoa(i))
+		jtest.RequireNil(t, err)
+		contexts = append(contexts, ctx)
+	}
+
+	stop()
+	for _, ctx := range contexts {
+		jtest.Assert(t, context.Canceled, ctx.Err())
+	}
 }
 
-func (e expMutexError) Info(ctx context.Context, msg string, opts ...jettison.Option) {
-	e.t.Log("INFO", msg)
-	log.Info(ctx, msg, opts...)
-}
+func TestRoles_ManyRolesReleasedOnReRank(t *testing.T) {
+	r, _ := RolesForTesting(t, randomName(), RolesOptions{})
 
-func (e expMutexError) Error(ctx context.Context, err error, ol ...jettison.Option) {
-	e.t.Log("ERROR", err)
-	log.Error(ctx, err, ol...)
-	var je *errors.JettisonError
-	require.True(e.t, errors.As(err, &je))
-	_, ok := je.GetKey("held_by_lease")
-	require.True(e.t, ok)
+	r.updateRank(context.Background(), Rank{MyRank: 0, HaveRank: true, Size: 1})
+
+	var contexts []context.Context
+	for i := 1; i <= 200; i++ {
+		ctx, _, err := r.AwaitRoleContext(context.Background(), strconv.Itoa(i))
+		jtest.RequireNil(t, err)
+		contexts = append(contexts, ctx)
+	}
+
+	r.updateRank(context.Background(), Rank{})
+	// A second time so that we wait for the processing goroutine to cancel all the contexts
+	r.updateRank(context.Background(), Rank{})
+
+	for _, ctx := range contexts {
+		jtest.Assert(t, context.Canceled, ctx.Err())
+	}
 }
 
 func TestRoles_RoleClashError(t *testing.T) {
-	l := expMutexError{t: t}
+	ctx := context.Background()
+	cli := etcdForTesting(t)
 
-	n := randomName()
+	sess1, err := concurrency.NewSession(cli)
+	jtest.RequireNil(t, err)
+	sess2, err := concurrency.NewSession(cli)
+	jtest.RequireNil(t, err)
 
-	// Get and lock the role with r1
-	r1, _ := RolesForTesting(t, n, RolesOptions{Assign: assigner(t, "clash")})
-	r1.updateRank(context.Background(), Rank{MyRank: 0, HaveRank: true, Size: 1})
-	_, _, err := r1.AwaitRoleContext(context.Background(), "clash")
-	jtest.AssertNil(t, err)
-
-	// Now we'll try and get the role again
-	r2, _ := RolesForTesting(t, n, RolesOptions{
-		Log:         l,
-		LockTimeout: time.Millisecond,
-		Assign:      assigner(t, "clash"),
+	t.Cleanup(func() {
+		jtest.RequireNil(t, sess1.Close())
 	})
-	r2.updateRank(context.Background(), Rank{MyRank: 0, HaveRank: true, Size: 1})
+	t.Cleanup(func() {
+		jtest.RequireNil(t, sess2.Close())
+	})
 
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
-	defer cancel()
+	ns := randomName()
+	_, err = createLock(ctx, sess1, ns, "clash", 0)
+	jtest.RequireNil(t, err)
 
-	_, _, err2 := r2.AwaitRoleContext(ctx, "clash")
-	jtest.Assert(t, context.DeadlineExceeded, err2)
+	_, err = createLock(ctx, sess2, ns, "clash", 0)
+	jtest.Assert(t, concurrency.ErrLocked, err)
+
+	var je *errors.JettisonError
+	require.True(t, errors.As(err, &je))
+	_, ok := je.GetKey("held_by_lease")
+	require.True(t, ok)
 }
