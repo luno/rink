@@ -299,6 +299,7 @@ func (r *Roles) assignRoles(ctx context.Context, sess *concurrency.Session) erro
 				}
 			}
 			if err := r.unlockMutexes(ctx, toUnlock); err != nil {
+				// Return the error so that the session can be cancelled
 				return err
 			}
 			// Tell any waiting goroutines that they should try again
@@ -311,6 +312,10 @@ func (r *Roles) assignRoles(ctx context.Context, sess *concurrency.Session) erro
 	}
 }
 
+// unlockMutexes will unlock each mutex individually.
+// This should be used when your session will continue to be alive.
+// If there's an error unlocking then we give up because we assume that
+// we'll need to close the session which will unlock all the mutexes anyway.
 func (r *Roles) unlockMutexes(ctx context.Context, locks []lockedContext) error {
 	eg, ctx := errgroup.WithContext(ctx)
 	for _, l := range locks {
