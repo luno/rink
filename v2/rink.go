@@ -4,7 +4,6 @@ import (
 	"context"
 	"time"
 
-	"github.com/luno/jettison"
 	"github.com/luno/jettison/errors"
 	"github.com/luno/jettison/j"
 	"github.com/luno/jettison/log"
@@ -15,9 +14,9 @@ import (
 
 type noopLogger struct{}
 
-func (noopLogger) Debug(context.Context, string, ...jettison.Option) {}
-func (noopLogger) Info(context.Context, string, ...jettison.Option)  {}
-func (noopLogger) Error(context.Context, error, ...jettison.Option)  {}
+func (noopLogger) Debug(context.Context, string, ...log.Option) {}
+func (noopLogger) Info(context.Context, string, ...log.Option)  {}
+func (noopLogger) Error(context.Context, error, ...log.Option)  {}
 
 type options struct {
 	Log log.Interface

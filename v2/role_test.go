@@ -9,7 +9,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/luno/jettison"
 	"github.com/luno/jettison/errors"
 	"github.com/luno/jettison/jtest"
 	"github.com/luno/jettison/log"
@@ -40,17 +39,17 @@ type testLogger struct {
 	testing.TB
 }
 
-func (t testLogger) Debug(ctx context.Context, msg string, ol ...jettison.Option) {
+func (t testLogger) Debug(ctx context.Context, msg string, ol ...log.Option) {
 	t.Log("DEBUG", msg)
 	log.Debug(ctx, msg, ol...)
 }
 
-func (t testLogger) Info(ctx context.Context, msg string, ol ...jettison.Option) {
+func (t testLogger) Info(ctx context.Context, msg string, ol ...log.Option) {
 	t.Log("INFO", msg)
 	log.Info(ctx, msg, ol...)
 }
 
-func (t testLogger) Error(ctx context.Context, err error, ol ...jettison.Option) {
+func (t testLogger) Error(ctx context.Context, err error, ol ...log.Option) {
 	t.Log("ERROR", err)
 	log.Error(ctx, err, ol...)
 }
@@ -221,7 +220,6 @@ func TestRoles_MutexAlreadyLocked(t *testing.T) {
 
 	_, _, err = r.AwaitRoleContext(context.Background(), "test")
 	jtest.AssertNil(t, err)
-
 }
 
 func TestRoles_AwaitCancel(t *testing.T) {
@@ -323,11 +321,13 @@ func TestRoles_MutexKeys(t *testing.T) {
 		expKey    string
 	}{
 		{name: "empty", expKey: "roles"},
-		{name: "namespace only",
+		{
+			name:      "namespace only",
 			namespace: "test",
 			expKey:    "test/roles",
 		},
-		{name: "full key",
+		{
+			name:      "full key",
 			namespace: "hello",
 			role:      "world",
 			expKey:    "hello/roles/world",

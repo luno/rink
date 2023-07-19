@@ -6,7 +6,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/luno/jettison"
 	"github.com/luno/jettison/jtest"
 	"github.com/luno/jettison/log"
 	"github.com/stretchr/testify/assert"
@@ -104,21 +103,22 @@ func makeLogger() *logCounter {
 	return &logCounter{counts: make(map[string]int)}
 }
 
-func (l *logCounter) Debug(ctx context.Context, msg string, ol ...jettison.Option) {
+func (l *logCounter) Debug(ctx context.Context, msg string, ol ...log.Option) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	ol = append(ol, log.WithLevel(log.LevelDebug))
 	log.Info(ctx, msg, ol...)
 	l.counts["debug"] += 1
 }
-func (l *logCounter) Info(ctx context.Context, msg string, ol ...jettison.Option) {
+
+func (l *logCounter) Info(ctx context.Context, msg string, ol ...log.Option) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	log.Info(ctx, msg, ol...)
 	l.counts["info"] += 1
 }
 
-func (l *logCounter) Error(ctx context.Context, err error, ol ...jettison.Option) {
+func (l *logCounter) Error(ctx context.Context, err error, ol ...log.Option) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	log.Error(ctx, err, ol...)
@@ -178,7 +178,8 @@ func TestBuildOptions(t *testing.T) {
 
 		expOptions options
 	}{
-		{name: "logger defaulted to cluster and roles",
+		{
+			name: "logger defaulted to cluster and roles",
 			opts: []Option{WithLogger(l1)},
 			expOptions: options{
 				Log:            l1,
@@ -186,7 +187,8 @@ func TestBuildOptions(t *testing.T) {
 				RolesOptions:   RolesOptions{Log: l1},
 			},
 		},
-		{name: "can specify separate logger for cluster and roles",
+		{
+			name: "can specify separate logger for cluster and roles",
 			opts: []Option{
 				WithLogger(l1),
 				WithClusterOptions(ClusterOptions{Log: l2}),
@@ -211,5 +213,4 @@ func TestBuildOptions(t *testing.T) {
 			assert.Equal(t, tc.expOptions.ClusterOptions.NewMemberWait, o.ClusterOptions.NewMemberWait)
 		})
 	}
-
 }
