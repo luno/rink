@@ -93,6 +93,14 @@ type Rink struct {
 // Call Shutdown to stop and clean up rink roles.
 // Use Roles to access individual roles.
 func New(cli *clientv3.Client, name string, opts ...Option) *Rink {
+	s := Create(cli, name, opts...)
+	go s.Run()
+	return s
+}
+
+// Create creates a Rink client, ready to join the cluster.
+// Call Run to join the cluster and assign roles.
+func Create(cli *clientv3.Client, name string, opts ...Option) *Rink {
 	ctx, cancel := context.WithCancel(context.Background())
 	s := &Rink{
 		cli:      cli,
@@ -104,8 +112,6 @@ func New(cli *clientv3.Client, name string, opts ...Option) *Rink {
 		options: buildOptions(opts),
 	}
 	s.Roles = NewRoles(name, s.options.RolesOptions)
-
-	go s.run(ctx)
 	return s
 }
 
@@ -113,14 +119,15 @@ func New(cli *clientv3.Client, name string, opts ...Option) *Rink {
 // revoke the current Session.
 func (s *Rink) Shutdown(ctx context.Context) {
 	s.cancel()
-	s.options.Log.Debug(s.ctx, "shutting down rink")
+	s.options.Log.Debug(ctx, "shutting down rink")
 	select {
 	case <-s.finished:
 	case <-ctx.Done():
 	}
 }
 
-func (s *Rink) run(ctx context.Context) {
+func (s *Rink) Run() {
+	ctx := s.ctx
 	s.options.Log.Debug(ctx, "running rink")
 	defer s.options.Log.Debug(ctx, "stopped rink")
 
