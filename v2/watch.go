@@ -10,8 +10,10 @@ import (
 	clientv3 "go.etcd.io/etcd/client/v3"
 )
 
-const etcdScanPage = 1000
-const monitorInterval = 5 * time.Minute
+const (
+	etcdScanPage    = 1000
+	monitorInterval = 5 * time.Minute
+)
 
 func knownLeases(ctx context.Context, cli *clientv3.Client) (map[clientv3.LeaseID]int64, error) {
 	leases, err := cli.Lease.Leases(ctx)

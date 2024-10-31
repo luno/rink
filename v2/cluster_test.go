@@ -203,10 +203,12 @@ func TestValidateOptions(t *testing.T) {
 		expOut      ClusterOptions
 		expError    bool
 	}{
-		{name: "empty cluster errors",
+		{
+			name:     "empty cluster errors",
 			expError: true,
 		},
-		{name: "default",
+		{
+			name:        "default",
 			clusterName: "test",
 			expOut: ClusterOptions{
 				MemberName:      "78fc2ffac2fd9401",
@@ -216,7 +218,8 @@ func TestValidateOptions(t *testing.T) {
 				memberKeyPrefix: "test/members/",
 			},
 		},
-		{name: "member name with dashes",
+		{
+			name:        "member name with dashes",
 			clusterName: "deploy",
 			in: ClusterOptions{
 				MemberName:    "pod-1",
