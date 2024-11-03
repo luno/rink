@@ -14,8 +14,10 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
-type AssignRoleFunc func(role string, roleCount int32) int32
-type RoleNotify func(role string, locked bool)
+type (
+	AssignRoleFunc func(role string, roleCount int32) int32
+	RoleNotify     func(role string, locked bool)
+)
 
 type RolesOptions struct {
 	// Log is used for logging messages and errors on role management

@@ -21,7 +21,8 @@ func TestGetMemberChanges(t *testing.T) {
 		expChanges memberChanges
 	}{
 		{name: "empty stays empty"},
-		{name: "old members stayed",
+		{
+			name:    "old members stayed",
 			members: map[string]time.Time{"alice": ts(101)},
 			last:    ranks{"alice": 0},
 			now:     ts(200),
@@ -29,14 +30,16 @@ func TestGetMemberChanges(t *testing.T) {
 				Remained: []string{"alice"},
 			},
 		},
-		{name: "new member added",
+		{
+			name:    "new member added",
 			members: map[string]time.Time{"alice": ts(100)},
 			now:     ts(200),
 			expChanges: memberChanges{
 				Added: []string{"alice"},
 			},
 		},
-		{name: "new member waits",
+		{
+			name:          "new member waits",
 			members:       map[string]time.Time{"alice": ts(200), "bob": ts(201)},
 			last:          map[string]int32{"alice": 0},
 			now:           ts(201),
@@ -46,7 +49,8 @@ func TestGetMemberChanges(t *testing.T) {
 				Waiting:  []string{"bob"},
 			},
 		},
-		{name: "new member replaces missing member",
+		{
+			name:    "new member replaces missing member",
 			members: map[string]time.Time{"bob": ts(1000)},
 			last:    map[string]int32{"alice": 0},
 			now:     ts(200),
@@ -54,7 +58,8 @@ func TestGetMemberChanges(t *testing.T) {
 				Replaced: map[string]string{"alice": "bob"},
 			},
 		},
-		{name: "bad last state ignored",
+		{
+			name:    "bad last state ignored",
 			members: map[string]time.Time{"alice": ts(100)},
 			last:    ranks{"alice": 100},
 			now:     ts(200),
@@ -62,7 +67,8 @@ func TestGetMemberChanges(t *testing.T) {
 				Remained: []string{"alice"},
 			},
 		},
-		{name: "new cluster add members regardless of wait",
+		{
+			name:          "new cluster add members regardless of wait",
 			members:       map[string]time.Time{"alice": ts(100), "bob": ts(101)},
 			now:           ts(100),
 			newMemberWait: time.Minute,
@@ -70,14 +76,16 @@ func TestGetMemberChanges(t *testing.T) {
 				Added: []string{"alice", "bob"},
 			},
 		},
-		{name: "new members, in order",
+		{
+			name:    "new members, in order",
 			members: map[string]time.Time{"alice": ts(102), "bob": ts(101)},
 			now:     ts(200),
 			expChanges: memberChanges{
 				Added: []string{"bob", "alice"},
 			},
 		},
-		{name: "new members get added after delay expired",
+		{
+			name:          "new members get added after delay expired",
 			members:       map[string]time.Time{"alice": ts(100), "bob": ts(200)},
 			last:          map[string]int32{"alice": 0},
 			now:           ts(201),
@@ -87,7 +95,8 @@ func TestGetMemberChanges(t *testing.T) {
 				Added:    []string{"bob"},
 			},
 		},
-		{name: "old members removed",
+		{
+			name:    "old members removed",
 			members: map[string]time.Time{"bob": ts(101)},
 			last:    ranks{"alice": 0, "bob": 1},
 			now:     ts(200),
@@ -96,7 +105,8 @@ func TestGetMemberChanges(t *testing.T) {
 				Removed:  []string{"alice"},
 			},
 		},
-		{name: "old members replaced by new",
+		{
+			name:    "old members replaced by new",
 			members: map[string]time.Time{"bob": ts(101), "carol": ts(102)},
 			last:    ranks{"alice": 0, "bob": 1},
 			now:     ts(200),
@@ -105,7 +115,8 @@ func TestGetMemberChanges(t *testing.T) {
 				Replaced: map[string]string{"alice": "carol"},
 			},
 		},
-		{name: "full shuffle",
+		{
+			name:    "full shuffle",
 			members: map[string]time.Time{"bob": ts(101), "carol": ts(102), "dave": ts(103)},
 			last:    ranks{"alice": 0, "bob": 1},
 			now:     ts(200),
@@ -140,19 +151,23 @@ func TestGetNewRanks(t *testing.T) {
 		expRanks ranks
 	}{
 		{name: "no changes to empty"},
-		{name: "no changes to existing",
+		{
+			name:     "no changes to existing",
 			last:     ranks{"alice": 0},
 			changes:  memberChanges{Remained: []string{"alice"}},
 			expRanks: ranks{"alice": 0},
 		},
-		{name: "empty changes results in empty ranks",
+		{
+			name: "empty changes results in empty ranks",
 			last: ranks{"alice": 0},
 		},
-		{name: "add new member",
+		{
+			name:     "add new member",
 			changes:  memberChanges{Added: []string{"alice"}},
 			expRanks: ranks{"alice": 0},
 		},
-		{name: "add new member with existing",
+		{
+			name: "add new member with existing",
 			changes: memberChanges{
 				Added:    []string{"alice"},
 				Remained: []string{"bob"},
@@ -160,14 +175,16 @@ func TestGetNewRanks(t *testing.T) {
 			last:     ranks{"bob": 0},
 			expRanks: ranks{"bob": 0, "alice": 1},
 		},
-		{name: "replace existing member",
+		{
+			name: "replace existing member",
 			changes: memberChanges{
 				Replaced: map[string]string{"alice": "bob"},
 			},
 			last:     ranks{"alice": 0},
 			expRanks: ranks{"bob": 0},
 		},
-		{name: "lots of changes",
+		{
+			name: "lots of changes",
 			changes: memberChanges{
 				Remained: []string{"alice"},
 				Removed:  []string{"bob"},
@@ -185,7 +202,8 @@ func TestGetNewRanks(t *testing.T) {
 				"dave":  2,
 			},
 		},
-		{name: "old members had big ranks",
+		{
+			name: "old members had big ranks",
 			changes: memberChanges{
 				Remained: []string{"alice"},
 				Replaced: map[string]string{"bob": "carol"},

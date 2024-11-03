@@ -17,18 +17,23 @@ func TestConsistentHashRole(t *testing.T) {
 
 		expRank int32
 	}{
-		{name: "zero role count returns invalid role",
-			expRank: -1},
-		{name: "empty role can be ranked",
+		{
+			name:    "zero role count returns invalid role",
+			expRank: -1,
+		},
+		{
+			name:      "empty role can be ranked",
 			roleCount: 1,
 			expRank:   0,
 		},
-		{name: "'test' role is 1 when size is 10",
+		{
+			name:      "'test' role is 1 when size is 10",
 			role:      "test",
 			roleCount: 10,
 			expRank:   1,
 		},
-		{name: "'test' role is 1 when size is reduced to 5",
+		{
+			name:      "'test' role is 1 when size is reduced to 5",
 			role:      "test",
 			roleCount: 5,
 			expRank:   1,
@@ -74,7 +79,7 @@ func TestConsistentHash_EvenDistribution(t *testing.T) {
 	fiveCent := exp * 0.05
 
 	for rank, count := range roleRanks {
-		//diff := math.Abs(float64(count) - exp)
+		// diff := math.Abs(float64(count) - exp)
 		assert.InDelta(t, exp, count, fiveCent,
 			"rank %d has %d of %d roles", rank, count, roleCount,
 		)
