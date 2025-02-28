@@ -5,7 +5,7 @@ go 1.20
 require (
 	github.com/dgryski/go-jump v0.0.0-20170409065014-e1f439676b57
 	github.com/luno/jettison v0.0.0-20230718160357-e090ef1681b1
-	github.com/stretchr/testify v1.8.1
+	github.com/stretchr/testify v1.10.0
 	go.etcd.io/etcd/client/v3 v3.5.0
 	go.uber.org/zap v1.17.0
 	golang.org/x/sync v0.0.0-20210220032951-036812b2e83c
