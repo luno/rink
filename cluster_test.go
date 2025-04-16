@@ -10,6 +10,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/go-cmp/cmp"
+	"github.com/google/go-cmp/cmp/cmpopts"
 	"github.com/luno/jettison/errors"
 	"github.com/luno/jettison/j"
 	"github.com/luno/jettison/jtest"
@@ -195,7 +197,7 @@ func TestETCDCloses(t *testing.T) {
 }
 
 func TestValidateOptions(t *testing.T) {
-	rand.Seed(0)
+	rand.New(rand.NewSource(0))
 	testCases := []struct {
 		name        string
 		clusterName string
@@ -211,10 +213,8 @@ func TestValidateOptions(t *testing.T) {
 			name:        "default",
 			clusterName: "test",
 			expOut: ClusterOptions{
-				MemberName:      "78fc2ffac2fd9401",
 				NewMemberWait:   time.Minute,
 				electionKey:     "test/election",
-				memberKey:       "test/members/78fc2ffac2fd9401",
 				memberKeyPrefix: "test/members/",
 			},
 		},
@@ -226,10 +226,8 @@ func TestValidateOptions(t *testing.T) {
 				NewMemberWait: time.Second,
 			},
 			expOut: ClusterOptions{
-				MemberName:      "pod-1",
 				NewMemberWait:   time.Second,
 				electionKey:     "deploy/election",
-				memberKey:       "deploy/members/pod-1",
 				memberKeyPrefix: "deploy/members/",
 			},
 		},
@@ -249,7 +247,11 @@ func TestValidateOptions(t *testing.T) {
 			out.Log = nil
 			out.NotifyRank = nil
 			out.NotifyLeader = nil
-			assert.Equal(t, tc.expOut, out)
+			require.Empty(
+				t,
+				cmp.Diff(tc.expOut, out,
+					cmp.AllowUnexported(ClusterOptions{}),
+					cmpopts.IgnoreFields(ClusterOptions{}, "MemberName", "memberKey")))
 		})
 	}
 }

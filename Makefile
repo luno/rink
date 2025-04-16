@@ -1,13 +1,17 @@
+PROJECT_NAME := "rink/v2"
+PKG := "github.com/luno/$(PROJECT_NAME)"
+PKG_LIST := $(shell go list ${PKG}/... | grep -v /vendor/)
+
 .PHONY: vet test race
 
 vet: ## Lint the files
-	@$(MAKE) -C v2 vet
+	@go vet ${PKG_LIST}
 
 test: ## Run unittests
-	@$(MAKE) -C v2 test
+	@go test -short ${PKG_LIST}
 
 race: ## Run data race detector
-	@$(MAKE) -C v2 race
+	@go test -race -short ${PKG_LIST}
 
 help: ## Display this help screen
 	@grep -h -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-30s\033[0m %s\n", $$1, $$2}'
