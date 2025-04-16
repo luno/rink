@@ -1,6 +1,6 @@
 module github.com/luno/rink/v2
 
-go 1.20
+go 1.24
 
 require (
 	github.com/dgryski/go-jump v0.0.0-20211018200510-ba001c3ffce0
