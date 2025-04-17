@@ -8,8 +8,17 @@ on:
 
 jobs:
 
-  build:
+  sonar:
     runs-on: ubuntu-latest
+
+    services:
+      etcd:
+        image: bitnami/etcd:latest
+        env:
+          ALLOW_NONE_AUTHENTICATION: "yes"
+          ETCD_ADVERTISE_CLIENT_URLS: "http://localhost:2379"
+        ports:
+          - 2379
 
     steps:
       - uses: actions/checkout@v4
@@ -18,25 +27,14 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version: '1.24'
-
-jobs:
-  sonar:
-    runs-on: ubuntu-latest
-    services:
-      etcd:
-        image: bitnami/etcd:latest
-        ports:
-          - 2379
-          - 2380
-    steps:
-      - uses: actions/checkout@v3
-      - name: Set etcd endpoint for tests
+        
+      - name: Generate Sonar Report
         env:
           TESTING_ETCD_ENDPOINTS: http://localhost:${{ job.services.etcd.ports[2379] }}
-      - name: Generate Sonar Report
         run: go test -coverpkg=./... -coverprofile=coverage.out -json ./... > sonar-report.json
 
       - name: Upload coverage reports to Sonar
-        uses: sonarsource/sonarcloud-github-action@master
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+        if: github.event.pull_request.head.repo.full_name == github.repository || env.SONAR_TOKEN != ''
+        uses: SonarSource/sonarqube-scan-action@v5.1.0

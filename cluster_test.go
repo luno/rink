@@ -197,7 +197,6 @@ func TestETCDCloses(t *testing.T) {
 }
 
 func TestValidateOptions(t *testing.T) {
-	rand.New(rand.NewSource(0))
 	testCases := []struct {
 		name        string
 		clusterName string
