@@ -13,7 +13,12 @@ type memberChanges struct {
 	Waiting  []string
 }
 
-func getMemberChanges(members map[string]time.Time, ranks ranks, now time.Time, newMemberWait time.Duration) memberChanges {
+func getMemberChanges(
+	members map[string]time.Time,
+	ranks ranks,
+	now time.Time,
+	newMemberWait time.Duration,
+) memberChanges {
 	unranked := Difference(members, ranks)
 	missing := Difference(ranks, members)
 
