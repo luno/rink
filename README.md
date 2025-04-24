@@ -21,7 +21,7 @@ rolling deploys which minimises role rebalancing.
 
 Example Usage: Given multiple replicas of a service, `rink` will ensure that at most one replica 
 does the work in `doFooStuff` at a time.
-```
+```go
 cli, err := etcd.NewClient()
 if err != nil {...}
 r := rinkv2.New(cli, "my_rink")
