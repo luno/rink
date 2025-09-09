@@ -1,6 +1,6 @@
 module github.com/luno/rink/v2
 
-go 1.24
+go 1.24.0
 
 require (
 	github.com/dgryski/go-jump v0.0.0-20211018200510-ba001c3ffce0
@@ -9,7 +9,7 @@ require (
 	github.com/stretchr/testify v1.11.1
 	go.etcd.io/etcd/client/v3 v3.6.4
 	go.uber.org/zap v1.27.0
-	golang.org/x/sync v0.16.0
+	golang.org/x/sync v0.17.0
 	google.golang.org/grpc v1.75.0
 )
 
