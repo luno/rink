@@ -472,8 +472,7 @@ func TestRoles_RoleClashError(t *testing.T) {
 	_, err = createLock(ctx, sess2, ns, "clash", 0)
 	jtest.Assert(t, concurrency.ErrLocked, err)
 
-	var je *errors.JettisonError
-	require.True(t, errors.As(err, &je))
-	_, ok := je.GetKey("held_by_lease")
+	kvs := errors.GetKeyValues(err)
+	_, ok := kvs["held_by_lease"]
 	require.True(t, ok)
 }
