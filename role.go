@@ -321,7 +321,6 @@ func (r *Roles) assignRoles(ctx context.Context, sess *concurrency.Session) erro
 func (r *Roles) unlockMutexes(ctx context.Context, locks []lockedContext) error {
 	eg, ctx := errgroup.WithContext(ctx)
 	for _, l := range locks {
-		l := l
 		eg.Go(func() error {
 			if err := l.mu.Unlock(ctx); err != nil {
 				return errors.Wrap(err, "unable to unlock role", j.KV("role", l.role))

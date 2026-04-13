@@ -32,10 +32,7 @@ func getMemberChanges(
 
 	// Find how many members will be taking the place of
 	// missing members
-	replaced := len(unranked)
-	if len(missing) < replaced {
-		replaced = len(missing)
-	}
+	replaced := min(len(missing), len(unranked))
 	if replaced > 0 {
 		changes.Replaced = make(map[string]string)
 	}
