@@ -261,7 +261,7 @@ func TestServiceDeployment(t *testing.T) {
 
 	var deployOne []context.CancelFunc
 
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		name := fmt.Sprintf("deploy-1-member-%d", i)
 		deployOne = append(deployOne, c.GoMember(name))
 		// Allow time for last member to join

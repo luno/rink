@@ -53,7 +53,7 @@ func TestConsistentHash_EvenDistribution(t *testing.T) {
 	randString := func() string {
 		alphabet := "abcdefghijklmnopqrstuvwxyz"
 		var b strings.Builder
-		for i := 0; i < 20; i++ {
+		for range 20 {
 			_ = b.WriteByte(alphabet[r.Intn(len(alphabet))])
 		}
 		return b.String()
@@ -62,7 +62,7 @@ func TestConsistentHash_EvenDistribution(t *testing.T) {
 	roleCount := 100_000
 	roles := make(map[string]bool, roleCount)
 
-	for i := 0; i < 100_000; i++ {
+	for range 100_000 {
 		roles[randString()] = true
 	}
 	require.Len(t, roles, roleCount)

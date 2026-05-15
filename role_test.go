@@ -66,12 +66,10 @@ func RolesForTesting(t testing.TB, ns string, ro RolesOptions) (*Roles, func()) 
 
 	ctx, cancel := context.WithCancel(context.Background())
 	var wg sync.WaitGroup
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
+	wg.Go(func() {
 		err := r.assignRoles(ctx, sess)
 		jtest.Assert(t, context.Canceled, err)
-	}()
+	})
 
 	var stopped bool
 	stop := func() {
@@ -163,7 +161,7 @@ func TestRoles_MultipleAwait(t *testing.T) {
 	r, _ := RolesForTesting(t, randomName(), RolesOptions{})
 
 	var wg sync.WaitGroup
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		wg.Add(1)
 		go func(role string) {
 			defer wg.Done()
