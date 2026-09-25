@@ -5,7 +5,7 @@ go 1.26.0
 require (
 	github.com/dgryski/go-jump v0.0.0-20211018200510-ba001c3ffce0
 	github.com/google/go-cmp v0.7.0
-	github.com/luno/jettison v0.0.0-20260604094545-6727dacc9313
+	github.com/luno/jettison v0.0.0-20260925111351-32d6ad008376
 	github.com/stretchr/testify v1.12.1
 	go.etcd.io/etcd/client/v3 v3.6.11
 	go.uber.org/zap v1.28.0
