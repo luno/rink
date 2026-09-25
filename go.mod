@@ -5,7 +5,7 @@ go 1.26.0
 require (
 	github.com/dgryski/go-jump v0.0.0-20211018200510-ba001c3ffce0
 	github.com/google/go-cmp v0.7.0
-	github.com/luno/jettison v0.0.0-20260925111351-32d6ad008376
+	github.com/luno/jettison v0.0.0-20260925124914-53a33bc7b509
 	github.com/stretchr/testify v1.12.1
 	go.etcd.io/etcd/client/v3 v3.6.11
 	go.uber.org/zap v1.28.0
@@ -27,11 +27,11 @@ require (
 	go.etcd.io/etcd/client/pkg/v3 v3.6.11 // indirect
 	go.uber.org/multierr v1.11.0 // indirect
 	go.yaml.in/yaml/v3 v3.0.5 // indirect
-	golang.org/x/net v0.58.0 // indirect
-	golang.org/x/sys v0.47.0 // indirect
-	golang.org/x/text v0.41.0 // indirect
+	golang.org/x/net v0.59.0 // indirect
+	golang.org/x/sys v0.48.0 // indirect
+	golang.org/x/text v0.42.0 // indirect
 	golang.org/x/xerrors v0.0.0-20240903120638-7835f813f4da // indirect
 	google.golang.org/genproto v0.0.0-20230410155749-daa745c078e1 // indirect
-	google.golang.org/protobuf v1.36.11 // indirect
+	google.golang.org/protobuf v1.36.12 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
