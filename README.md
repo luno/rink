@@ -11,6 +11,9 @@ rolling deploys which minimises role rebalancing.
   by consistent hashing.
 - When the size of rink (n) grows or shrinks, ranks are rebalanced (ensuring unique ranks less than n).
 - Rebalancing results in all roles being reassigned.
+- With the `RolesOptions.EagerLock` feature flag (off by default), a member remembers each role that its
+  clients request. When a rebalance assigns such a role to the member, it locks the role immediately,
+  without waiting for the next client request.
 - Stickyness is provided by a configurable rebalance delay. A rebalance 
   due to a joined member is only triggered after the rebalance delay. If another member leaves
   during this time, its rank will immediately be transferred without affecting other members.

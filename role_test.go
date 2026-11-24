@@ -3,6 +3,7 @@ package rink
 import (
 	"context"
 	"math/rand"
+	"os"
 	"path"
 	"strconv"
 	"sync"
@@ -57,6 +58,10 @@ func (t testLogger) Error(ctx context.Context, err error, ol ...log.Option) {
 func RolesForTesting(t testing.TB, ns string, ro RolesOptions) (*Roles, func()) {
 	if ro.Log == nil {
 		ro.Log = testLogger{t}
+	}
+	// Set RINK_EAGER_LOCK=1 to run every roles test with the EagerLock feature flag on.
+	if os.Getenv("RINK_EAGER_LOCK") != "" {
+		ro.EagerLock = true
 	}
 	r := NewRoles(ns, ro)
 
@@ -473,4 +478,160 @@ func TestRoles_RoleClashError(t *testing.T) {
 	kvs := errors.GetKeyValues(err)
 	_, ok := kvs["held_by_lease"]
 	require.True(t, ok)
+}
+
+// notifyRecorder collects Notify callbacks so that tests can wait for a role to change.
+type notifyRecorder struct {
+	ch chan bool
+}
+
+func newNotifyRecorder(role string) (*notifyRecorder, RoleNotify) {
+	n := &notifyRecorder{ch: make(chan bool, 100)}
+	return n, func(r string, locked bool) {
+		if r == role {
+			n.ch <- locked
+		}
+	}
+}
+
+func (n *notifyRecorder) await(t *testing.T, locked bool) {
+	t.Helper()
+	select {
+	case got := <-n.ch:
+		require.Equal(t, locked, got)
+	case <-time.After(5 * time.Second):
+		require.Fail(t, "timed out waiting for notify", "locked=%v", locked)
+	}
+}
+
+func TestRoles_RelocksKnownRoleOnRankChange(t *testing.T) {
+	n, notify := newNotifyRecorder("test")
+	r, _ := RolesForTesting(t, randomName(), RolesOptions{Notify: notify, EagerLock: true})
+	have := Rank{MyRank: 0, HaveRank: true, Size: 1}
+
+	r.updateRank(context.Background(), have)
+	_, _, ok := r.Get(context.Background(), "test")
+	require.True(t, ok)
+	n.await(t, true)
+
+	r.updateRank(context.Background(), Rank{})
+	n.await(t, false)
+
+	// No client asks for the role again, it must still be locked.
+	r.updateRank(context.Background(), have)
+	n.await(t, true)
+}
+
+func TestRoles_LocksKnownRoleWhenReleased(t *testing.T) {
+	n, notify := newNotifyRecorder("test")
+	r, _ := RolesForTesting(t, randomName(), RolesOptions{
+		Notify:      notify,
+		EagerLock:   true,
+		LockTimeout: 100 * time.Millisecond,
+		// Long retry so that only the background lock can wake the waiter in time.
+		AwaitRetry: time.Hour,
+	})
+
+	cli2 := etcdForTesting(t)
+	sess2, err := concurrency.NewSession(cli2)
+	jtest.RequireNil(t, err)
+	t.Cleanup(func() { jtest.RequireNil(t, sess2.Close()) })
+	mu := concurrency.NewMutex(sess2, mutexKey(r.namespace, "test"))
+	jtest.RequireNil(t, mu.Lock(context.Background()))
+
+	r.updateRank(context.Background(), Rank{MyRank: 0, HaveRank: true, Size: 1})
+
+	_, _, ok := r.Get(context.Background(), "test")
+	require.False(t, ok)
+	n.await(t, false)
+
+	// A second request must not wait for LockTimeout again.
+	t0 := time.Now()
+	_, _, ok = r.Get(context.Background(), "test")
+	require.False(t, ok)
+	require.Less(t, time.Since(t0), 100*time.Millisecond)
+
+	waiter := make(chan error, 1)
+	go func() {
+		_, _, err := r.AwaitRoleContext(context.Background(), "test")
+		waiter <- err
+	}()
+
+	// The role is locked when the other holder lets go, without a new client request.
+	jtest.RequireNil(t, mu.Unlock(context.Background()))
+	n.await(t, true)
+
+	select {
+	case err := <-waiter:
+		jtest.RequireNil(t, err)
+	case <-time.After(5 * time.Second):
+		require.Fail(t, "waiter was not woken by the lock")
+	}
+}
+
+func TestRoles_HandsBackRoleLockedAfterRankLoss(t *testing.T) {
+	n, notify := newNotifyRecorder("test")
+	r, _ := RolesForTesting(t, randomName(), RolesOptions{
+		Notify:      notify,
+		EagerLock:   true,
+		LockTimeout: 100 * time.Millisecond,
+	})
+
+	cli2 := etcdForTesting(t)
+	sess2, err := concurrency.NewSession(cli2)
+	jtest.RequireNil(t, err)
+	t.Cleanup(func() { jtest.RequireNil(t, sess2.Close()) })
+	mu := concurrency.NewMutex(sess2, mutexKey(r.namespace, "test"))
+	jtest.RequireNil(t, mu.Lock(context.Background()))
+
+	r.updateRank(context.Background(), Rank{MyRank: 0, HaveRank: true, Size: 1})
+	_, _, ok := r.Get(context.Background(), "test")
+	require.False(t, ok)
+	n.await(t, false)
+
+	// We lose the rank while we're still waiting for the lock.
+	r.updateRank(context.Background(), Rank{})
+	jtest.RequireNil(t, mu.Unlock(context.Background()))
+
+	// Another member must be able to lock the role, we must not hold on to it.
+	lockCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	jtest.RequireNil(t, mu.Lock(lockCtx))
+	require.Empty(t, n.ch)
+}
+
+func TestRoles_RelocksKnownRoleOnNewSession(t *testing.T) {
+	n, notify := newNotifyRecorder("test")
+	r := NewRoles(randomName(), RolesOptions{Notify: notify, EagerLock: true, Log: testLogger{t}})
+	cli := etcdForTesting(t)
+	have := Rank{MyRank: 0, HaveRank: true, Size: 1}
+
+	run := func() (stop func()) {
+		sess, err := concurrency.NewSession(cli)
+		jtest.RequireNil(t, err)
+		ctx, cancel := context.WithCancel(context.Background())
+		var wg sync.WaitGroup
+		wg.Go(func() {
+			jtest.Assert(t, context.Canceled, r.assignRoles(ctx, sess))
+		})
+		return func() {
+			cancel()
+			wg.Wait()
+			jtest.RequireNil(t, sess.Close())
+		}
+	}
+
+	stop := run()
+	r.updateRank(context.Background(), have)
+	_, _, ok := r.Get(context.Background(), "test")
+	require.True(t, ok)
+	n.await(t, true)
+	stop()
+	n.await(t, false)
+
+	// A new session locks the role again without a client request.
+	stop = run()
+	defer stop()
+	r.updateRank(context.Background(), have)
+	n.await(t, true)
 }
