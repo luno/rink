@@ -239,8 +239,12 @@ type lockResult struct {
 func (r *Roles) awaitLock(ctx context.Context, done <-chan struct{},
 	sess *concurrency.Session, role string, results chan<- lockResult,
 ) {
-	res := lockResult{role: role, err: ctx.Err()}
-	for ctx.Err() == nil {
+	res := lockResult{role: role}
+	for {
+		// Always record the cancellation, a nil error means that we hold the lock.
+		if res.err = ctx.Err(); res.err != nil {
+			break
+		}
 		mu := concurrency.NewMutex(sess, mutexKey(r.namespace, role))
 		res.err = mu.Lock(ctx)
 		if res.err == nil {
@@ -248,7 +252,8 @@ func (r *Roles) awaitLock(ctx context.Context, done <-chan struct{},
 			break
 		}
 		if ctx.Err() != nil {
-			break
+			// Cancelled, the check at the top of the loop records it
+			continue
 		}
 		// NoReturnErr: Log and try again
 		r.options.Log.Error(ctx, errors.Wrap(res.err, "locking role", j.KV("role", role)))

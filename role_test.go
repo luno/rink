@@ -522,9 +522,33 @@ func TestRoles_RelocksKnownRoleOnRankChange(t *testing.T) {
 	n.await(t, true)
 }
 
+// requestLogger signals on handled each time assignRoles has handled a client request.
+type requestLogger struct {
+	testLogger
+	handled chan struct{}
+}
+
+func (l requestLogger) Debug(ctx context.Context, msg string, ol ...log.Option) {
+	l.testLogger.Debug(ctx, msg, ol...)
+	if msg == "handled role request" {
+		l.handled <- struct{}{}
+	}
+}
+
+func (l requestLogger) await(t *testing.T) {
+	t.Helper()
+	select {
+	case <-l.handled:
+	case <-time.After(5 * time.Second):
+		require.Fail(t, "timed out waiting for a role request to be handled")
+	}
+}
+
 func TestRoles_LocksKnownRoleWhenReleased(t *testing.T) {
 	n, notify := newNotifyRecorder("test")
+	reqs := requestLogger{testLogger: testLogger{t}, handled: make(chan struct{}, 100)}
 	r, _ := RolesForTesting(t, randomName(), RolesOptions{
+		Log:         reqs,
 		Notify:      notify,
 		EagerLock:   true,
 		LockTimeout: 100 * time.Millisecond,
@@ -544,18 +568,24 @@ func TestRoles_LocksKnownRoleWhenReleased(t *testing.T) {
 	_, _, ok := r.Get(context.Background(), "test")
 	require.False(t, ok)
 	n.await(t, false)
+	reqs.await(t)
 
 	// A second request must not wait for LockTimeout again.
 	t0 := time.Now()
 	_, _, ok = r.Get(context.Background(), "test")
 	require.False(t, ok)
 	require.Less(t, time.Since(t0), 100*time.Millisecond)
+	reqs.await(t)
 
 	waiter := make(chan error, 1)
 	go func() {
 		_, _, err := r.AwaitRoleContext(context.Background(), "test")
 		waiter <- err
 	}()
+
+	// Make sure that the waiter is waiting for a change before the role is released,
+	// so that we know it's the lock that wakes it.
+	reqs.await(t)
 
 	// The role is locked when the other holder lets go, without a new client request.
 	jtest.RequireNil(t, mu.Unlock(context.Background()))
